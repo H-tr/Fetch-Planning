@@ -95,32 +95,44 @@ class MotionPlanner:
         full_names = fetch_robot_config.joint_names
         base_slice = JOINT_GROUPS["base"]
         base_indices = set(range(base_slice.start, base_slice.stop))
-        sg = PLANNING_SUBGROUPS.get(robot_name)
+        base_joint_names = set(full_names[base_slice])
 
-        if robot_name in ("fetch", "fetch_whole_body") and sg is None:
-            # "fetch" alias → full whole-body planner
-            self._planner = OmplVampPlanner(BASE_TURNING_RADIUS)
-            self._joint_names = list(full_names)
-            self._subgroup_indices = None
-            self._has_base = True
-        elif sg is None:
+        # Resolve subgroup or whole-body alias.
+        if robot_name in ("fetch", "fetch_whole_body"):
+            sg = PLANNING_SUBGROUPS.get("fetch_whole_body")
+            if sg is None:
+                sg = {"dof": len(full_names), "joints": list(full_names)}
+        else:
+            sg = PLANNING_SUBGROUPS.get(robot_name)
+        if sg is None:
             raise ValueError(
                 f"Unknown robot name '{robot_name}'. "
                 f"Use one of: {available_robots()}"
             )
-        else:
-            # Subgroup planner — frozen joints come from the supplied
-            # base_config; the C++ checker injects them around the
-            # active subset before every collision query.
-            sg_joint_names = sg["joints"]
-            active_indices = [full_names.index(j) for j in sg_joint_names]
-            self._has_base = any(idx in base_indices for idx in active_indices)
-            self._planner = OmplVampPlanner(
-                active_indices,
-                self._base_config.tolist(),
-                BASE_TURNING_RADIUS,
+
+        sg_joint_names = sg["joints"]
+        active_indices = [full_names.index(j) for j in sg_joint_names]
+        self._has_base = any(idx in base_indices for idx in active_indices)
+
+        # Count how many *leading* active indices are base joints.
+        # This is passed to C++ so it knows the ReedsSheppStateSpace
+        # dimension — no hardcoded constant in C++.
+        base_dim = 0
+        if self._has_base:
+            base_dim = sum(
+                1 for j in sg_joint_names if j in base_joint_names
             )
-            self._joint_names = list(sg_joint_names)
+
+        self._planner = OmplVampPlanner(
+            active_indices,
+            self._base_config.tolist(),
+            base_dim,
+            BASE_TURNING_RADIUS,
+        )
+        self._joint_names = list(sg_joint_names)
+        if set(active_indices) == set(range(len(full_names))):
+            self._subgroup_indices = None
+        else:
             self._subgroup_indices = np.array(active_indices)
 
         self._ndof = self._planner.dimension()

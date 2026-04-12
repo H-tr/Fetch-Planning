@@ -1,12 +1,9 @@
 /**
  * Main planner class — OMPL frontend with VAMP collision backend.
  *
- * Two construction modes:
- *
- *  - ``OmplVampPlanner()`` — full body, 24 DOF (3 base + 21 joints).
- *  - ``OmplVampPlanner(active_indices, frozen_config)`` — subgroup
- *    planning over the listed joint indices, with the rest of the
- *    body pinned to ``frozen_config`` for every collision check.
+ * Single constructor: the Python side decides which joints are active,
+ * how many of them form the nonholonomic base, and what the turning
+ * radius is.  No robot-specific constants are hardcoded here.
  *
  * The planner exposes a uniform Python-friendly API:
  * ``add_pointcloud`` / ``add_sphere`` / ``clear_environment`` build
@@ -95,59 +92,37 @@ struct PlanResult {
 
 class OmplVampPlanner {
  public:
-  /// Full-body constructor (11 DOF: 3 base + 8 arm_with_torso).
+  /// Unified constructor — Python decides what is base vs. arm.
   ///
-  /// The base is nonholonomic, so the state space is a
-  /// CompoundStateSpace(ReedsSheppStateSpace + RealVectorStateSpace).
-  /// `turning_radius` is the minimum turning radius of the Reeds-Shepp
-  /// curves in metres; 0 is in-place rotation only (pure diff-drive).
-  OmplVampPlanner(double turning_radius = 0.2)
-      : active_dim_(Robot::dimension),
-        is_subgroup_(false),
-        has_base_(true),
-        turning_radius_(turning_radius) {
-    // Full-body joint indices are [0, 1, 2, ..., 10]; the first 3 are
-    // the base (x, y, theta). Reuse the subgroup code path for bounds.
-    active_indices_.resize(Robot::dimension);
-    for (int i = 0; i < static_cast<int>(Robot::dimension); ++i)
-      active_indices_[i] = i;
-    frozen_config_.assign(Robot::dimension, 0.0f);
-    build_state_space();
-  }
-
-  /// Subgroup constructor (reduced DOF).
-  ///
-  /// The planner infers whether the base is part of the active subset
-  /// by checking whether any of `active_indices` are in {0, 1, 2}.
-  /// If so, the state space is CompoundStateSpace(ReedsSheppStateSpace
-  /// + RealVectorStateSpace); otherwise it's a plain RealVectorStateSpace.
+  /// @param active_indices  Joint indices into the full-body config
+  ///     that this planner controls.
+  /// @param frozen_config   Full-body joint values; joints not in
+  ///     active_indices are pinned to these during collision checks.
+  /// @param base_dim  How many of the *leading* active indices form
+  ///     the nonholonomic base (0 = arm-only, 3 = SE2 base).
+  ///     When > 0, those indices use a ReedsSheppStateSpace; the
+  ///     rest use a RealVectorStateSpace.
+  /// @param turning_radius  Reeds-Shepp minimum turning radius
+  ///     (metres).  Ignored when base_dim == 0.
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config,
+                  int base_dim = 0,
                   double turning_radius = 0.2)
       : active_dim_(static_cast<int>(active_indices.size())),
-        is_subgroup_(true),
         active_indices_(std::move(active_indices)),
+        base_dim_(base_dim),
         turning_radius_(turning_radius) {
     frozen_config_.resize(frozen_config.size());
     for (std::size_t i = 0; i < frozen_config.size(); ++i)
       frozen_config_[i] = static_cast<float>(frozen_config[i]);
 
-    // Detect whether any of the active indices touch the base.
-    has_base_ = false;
-    for (auto idx : active_indices_) {
-      if (idx >= 0 && idx < kBaseDim) {
-        has_base_ = true;
-        break;
-      }
-    }
-    if (has_base_) {
-      validate_base_indices();
-    }
+    has_base_ = base_dim_ > 0;
+    base_only_ = has_base_ && (active_dim_ == base_dim_);
     build_state_space();
   }
 
   /// Configure base workspace bounds (x, y, theta). Call before plan()
-  /// to tighten the default limits from the spherized URDF.
+  /// to tighten the default limits.
   void set_base_bounds(double x_lo, double x_hi, double y_lo, double y_hi,
                        double theta_lo = -M_PI, double theta_hi = M_PI) {
     base_x_lo_ = x_lo;
@@ -156,7 +131,6 @@ class OmplVampPlanner {
     base_y_hi_ = y_hi;
     base_theta_lo_ = theta_lo;
     base_theta_hi_ = theta_hi;
-    base_bounds_set_ = true;
     build_state_space();
   }
 
@@ -182,9 +156,6 @@ class OmplVampPlanner {
   }
 
   // ── Constraint API ────────────────────────────────────────────────
-  //
-  // Constraints are accumulated by repeated add_*() calls and consumed
-  // by the next plan() call.  Use clear_constraints() to reset.
 
   void add_compiled_constraint(const std::string &so_path,
                                const std::string &symbol_name,
@@ -210,15 +181,10 @@ class OmplVampPlanner {
     const bool constrained = !constraints_.empty();
     if (constrained) {
       reject_incompatible_planner(planner_name);
-      // Both endpoints must already lie on the constraint manifold —
-      // we don't run a manifold IK on them.  This catches the common
-      // foot-gun where the user computes a target pose from FK on a
-      // different configuration than the one they're starting from.
       check_constraint_satisfaction(start, "start");
       check_constraint_satisfaction(goal, "goal");
     }
 
-    // Pick the right state space + space information for this plan.
     ob::StateSpacePtr active_space = space_;
     ob::SpaceInformationPtr si;
     if (constrained) {
@@ -226,8 +192,6 @@ class OmplVampPlanner {
           static_cast<unsigned int>(active_dim_), constraints_);
       auto css =
           std::make_shared<ob::ProjectedStateSpace>(space_, intersection);
-      // ConstrainedSpaceInformation's constructor wires the
-      // back-reference; css->setup() must come *after* that step.
       auto csi = std::make_shared<ob::ConstrainedSpaceInformation>(css);
       css->setup();
       si = csi;
@@ -236,19 +200,11 @@ class OmplVampPlanner {
       si = std::make_shared<ob::SpaceInformation>(space_);
     }
 
-    // All whole-body and base-inclusive subgroups use the Subgroup
-    // validators (they know how to read CompoundState or RealVector
-    // depending on has_base_). Full-body + base-excluded subgroups
-    // also run through Subgroup validators with the appropriate
-    // active_indices / frozen_config.
     si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
-        si, env_, active_indices_, frozen_config_, has_base_));
-    // ConstrainedSpaceInformation provides its own motion validator
-    // that wraps the projection — only override it in the unconstrained
-    // case.
+        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
     if (!constrained) {
       si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
-          si, env_, active_indices_, frozen_config_, has_base_));
+          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
     }
     si->setup();
 
@@ -275,9 +231,6 @@ class OmplVampPlanner {
       if (simplify) ss.simplifySolution();
 
       auto &path = ss.getSolutionPath();
-      // Interpolate after simplify so the returned path has enough
-      // waypoints to animate smoothly — OMPL's default uses the
-      // longest valid segment fraction of the state space.
       if (interpolate) path.interpolate();
       result.path_cost = path.length();
 
@@ -310,8 +263,11 @@ class OmplVampPlanner {
       lo[0] = base_x_lo_;
       lo[1] = base_y_lo_;
       lo[2] = base_theta_lo_;
-      auto bounds = arm_subspace_->getBounds();
-      for (int i = 3; i < active_dim_; ++i) lo[i] = bounds.low[i - 3];
+      if (arm_subspace_) {
+        auto bounds = arm_subspace_->getBounds();
+        for (int i = base_dim_; i < active_dim_; ++i)
+          lo[i] = bounds.low[i - base_dim_];
+      }
     } else {
       auto bounds = space_->as<ob::RealVectorStateSpace>()->getBounds();
       for (int i = 0; i < active_dim_; ++i) lo[i] = bounds.low[i];
@@ -325,8 +281,11 @@ class OmplVampPlanner {
       hi[0] = base_x_hi_;
       hi[1] = base_y_hi_;
       hi[2] = base_theta_hi_;
-      auto bounds = arm_subspace_->getBounds();
-      for (int i = 3; i < active_dim_; ++i) hi[i] = bounds.high[i - 3];
+      if (arm_subspace_) {
+        auto bounds = arm_subspace_->getBounds();
+        for (int i = base_dim_; i < active_dim_; ++i)
+          hi[i] = bounds.high[i - base_dim_];
+      }
     } else {
       auto bounds = space_->as<ob::RealVectorStateSpace>()->getBounds();
       for (int i = 0; i < active_dim_; ++i) hi[i] = bounds.high[i];
@@ -340,24 +299,21 @@ class OmplVampPlanner {
 
  private:
   int active_dim_;
-  bool is_subgroup_;
+  int base_dim_;
   bool has_base_ = false;
+  bool base_only_ = false;
   double turning_radius_;
 
-  // Base workspace bounds (only meaningful when has_base_ is true).
   double base_x_lo_ = -10.0;
   double base_x_hi_ = 10.0;
   double base_y_lo_ = -10.0;
   double base_y_hi_ = 10.0;
   double base_theta_lo_ = -M_PI;
   double base_theta_hi_ = M_PI;
-  bool base_bounds_set_ = false;
 
   std::vector<int> active_indices_;
   std::vector<float> frozen_config_;
   ob::StateSpacePtr space_;
-  // When has_base_, space_ is a CompoundStateSpace whose subspace 1 is
-  // this cached RealVectorStateSpace pointer (borrowed, non-owning).
   std::shared_ptr<ob::RealVectorStateSpace> arm_subspace_;
   FloatEnv float_env_;
   VampEnv env_;
@@ -365,28 +321,7 @@ class OmplVampPlanner {
 
   void sync_env() { env_ = VampEnv(float_env_); }
 
-  // When the first 3 active indices include base joints they must be
-  // exactly (0, 1, 2) in that order — the ReedsSheppStateSpace has a
-  // fixed (x, y, theta) layout. Planning a subgroup like
-  // {base_x, base_theta} without base_y does not make physical sense
-  // and is not supported.
-  void validate_base_indices() const {
-    if (active_indices_.size() < 3 || active_indices_[0] != 0 ||
-        active_indices_[1] != 1 || active_indices_[2] != 2) {
-      throw std::invalid_argument(
-          "When the base is part of the subgroup, active_indices must "
-          "start with (0, 1, 2) — the (x, y, theta) base joints must all "
-          "be included in that order. Partial base subgroups are not "
-          "supported.");
-    }
-  }
-
-  // Build an OMPL state space appropriate for the current active
-  // subgroup + base presence. Called from the constructors and from
-  // set_base_bounds() so bounds changes take effect immediately.
   void build_state_space() {
-    // Compute arm-joint bounds from VAMP's scale_configuration at the
-    // corresponding full-body indices.
     Robot::Configuration lo, hi;
     std::array<float, Robot::dimension> zeros{}, ones{};
     ones.fill(1.0f);
@@ -406,24 +341,32 @@ class OmplVampPlanner {
       se2_bounds.setHigh(1, base_y_hi_);
       se2->setBounds(se2_bounds);
 
-      // Build RealVector bounds for the non-base active joints.
-      const int arm_active_dim = active_dim_ - kBaseDim;
-      auto rv = std::make_shared<ob::RealVectorStateSpace>(arm_active_dim);
-      ob::RealVectorBounds rv_bounds(arm_active_dim);
-      for (int i = 0; i < arm_active_dim; ++i) {
-        auto idx = active_indices_[i + kBaseDim];
-        rv_bounds.setLow(i, std::min(lo_arr[idx], hi_arr[idx]));
-        rv_bounds.setHigh(i, std::max(lo_arr[idx], hi_arr[idx]));
-      }
-      rv->setBounds(rv_bounds);
-      arm_subspace_ = rv;
+      const int arm_active_dim = active_dim_ - base_dim_;
 
-      auto compound = std::make_shared<ob::CompoundStateSpace>();
-      compound->addSubspace(se2, 1.0);
-      compound->addSubspace(rv, 1.0);
-      compound->lock();
-      space_ = compound;
+      if (arm_active_dim == 0) {
+        base_only_ = true;
+        arm_subspace_ = nullptr;
+        space_ = se2;
+      } else {
+        base_only_ = false;
+        auto rv = std::make_shared<ob::RealVectorStateSpace>(arm_active_dim);
+        ob::RealVectorBounds rv_bounds(arm_active_dim);
+        for (int i = 0; i < arm_active_dim; ++i) {
+          auto idx = active_indices_[i + base_dim_];
+          rv_bounds.setLow(i, std::min(lo_arr[idx], hi_arr[idx]));
+          rv_bounds.setHigh(i, std::max(lo_arr[idx], hi_arr[idx]));
+        }
+        rv->setBounds(rv_bounds);
+        arm_subspace_ = rv;
+
+        auto compound = std::make_shared<ob::CompoundStateSpace>();
+        compound->addSubspace(se2, 1.0);
+        compound->addSubspace(rv, 1.0);
+        compound->lock();
+        space_ = compound;
+      }
     } else {
+      base_only_ = false;
       auto rv = std::make_shared<ob::RealVectorStateSpace>(active_dim_);
       ob::RealVectorBounds bounds(active_dim_);
       for (int i = 0; i < active_dim_; ++i) {
@@ -437,20 +380,22 @@ class OmplVampPlanner {
     }
   }
 
-  // Write a user-provided active config (3 base + N arm for has_base_,
-  // otherwise N arm) into an OMPL ScopedState<>.
   void write_scoped_state(ob::ScopedState<> &state,
                           const std::vector<double> &config) const {
-    if (has_base_) {
-      // Compound state: SE2 (subspace 0) + RealVector (subspace 1).
+    if (base_only_) {
+      auto *se2 = state.get()->as<ob::SE2StateSpace::StateType>();
+      se2->setX(config[0]);
+      se2->setY(config[1]);
+      se2->setYaw(config[2]);
+    } else if (has_base_) {
       auto *compound = state.get()->as<ob::CompoundStateSpace::StateType>();
       auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
       auto *rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
       se2->setX(config[0]);
       se2->setY(config[1]);
       se2->setYaw(config[2]);
-      for (int i = 3; i < active_dim_; ++i) {
-        rv->values[i - 3] = config[i];
+      for (int i = base_dim_; i < active_dim_; ++i) {
+        rv->values[i - base_dim_] = config[i];
       }
     } else {
       for (int i = 0; i < active_dim_; ++i) {
@@ -459,11 +404,19 @@ class OmplVampPlanner {
     }
   }
 
-  // Read an OMPL state back into an active-dim config vector (unpacks
-  // CompoundState or RealVector depending on the current layout).
   auto read_state(const ob::State *state) const -> std::vector<double> {
     std::vector<double> out(active_dim_);
-    if (has_base_) {
+    if (base_only_) {
+      const auto *wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
+      const auto *se2 =
+          wrapper
+              ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
+              : state->as<ob::SE2StateSpace::StateType>();
+      out[0] = se2->getX();
+      out[1] = se2->getY();
+      out[2] = se2->getYaw();
+    } else if (has_base_) {
       const auto *wrapper =
           dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
       const auto *compound =
@@ -476,8 +429,8 @@ class OmplVampPlanner {
       out[0] = se2->getX();
       out[1] = se2->getY();
       out[2] = se2->getYaw();
-      for (int i = 3; i < active_dim_; ++i) {
-        out[i] = rv->values[i - 3];
+      for (int i = base_dim_; i < active_dim_; ++i) {
+        out[i] = rv->values[i - base_dim_];
       }
     } else {
       const auto *rv = extract_real_state(state);
@@ -486,10 +439,6 @@ class OmplVampPlanner {
     return out;
   }
 
-  // Check that *active_q* satisfies every constraint within the
-  // OMPL constraint tolerance.  Throws std::invalid_argument with a
-  // descriptive message naming which constraint and how badly it was
-  // violated, so the user gets a clear error rather than a hang.
   void check_constraint_satisfaction(const std::vector<double> &active_q,
                                      const char *which) const {
     Eigen::VectorXd q(active_dim_);
@@ -506,14 +455,11 @@ class OmplVampPlanner {
             std::to_string(residual) + " > tolerance " +
             std::to_string(c->getTolerance()) +
             ").  Both start and goal must already lie on the constraint "
-            "manifold — compute target poses from FK on the start config "
-            "you intend to plan from.");
+            "manifold.");
       }
     }
   }
 
-  // ProjectedStateSpace only supports single-tree planners — batch
-  // / informed-tree variants don't go through manifold projection.
   static void reject_incompatible_planner(const std::string &name) {
     static const std::vector<std::string> bad = {
         "bitstar",  "abitstar",   "aitstar",  "eitstar",
@@ -532,7 +478,6 @@ class OmplVampPlanner {
 
   static auto create_planner(const ob::SpaceInformationPtr &si,
                              const std::string &name) -> ob::PlannerPtr {
-    // RRT family
     if (name == "rrtc" || name == "rrtconnect")
       return std::make_shared<og::RRTConnect>(si);
     if (name == "rrt") return std::make_shared<og::RRT>(si);
@@ -545,27 +490,22 @@ class OmplVampPlanner {
     if (name == "lbtrrt") return std::make_shared<og::LBTRRT>(si);
     if (name == "trrt") return std::make_shared<og::TRRT>(si);
     if (name == "bitrrt") return std::make_shared<og::BiTRRT>(si);
-    // Informed trees (asymptotically optimal)
     if (name == "bitstar") return std::make_shared<og::BITstar>(si);
     if (name == "abitstar") return std::make_shared<og::ABITstar>(si);
     if (name == "aitstar") return std::make_shared<og::AITstar>(si);
     if (name == "eitstar") return std::make_shared<og::EITstar>(si);
     if (name == "blitstar") return std::make_shared<og::BLITstar>(si);
-    // FMT
     if (name == "fmt") return std::make_shared<og::FMT>(si);
     if (name == "bfmt") return std::make_shared<og::BFMT>(si);
-    // KPIECE
     if (name == "kpiece") return std::make_shared<og::KPIECE1>(si);
     if (name == "bkpiece") return std::make_shared<og::BKPIECE1>(si);
     if (name == "lbkpiece") return std::make_shared<og::LBKPIECE1>(si);
-    // PRM family
     if (name == "prm") return std::make_shared<og::PRM>(si);
     if (name == "prmstar") return std::make_shared<og::PRMstar>(si);
     if (name == "lazyprm") return std::make_shared<og::LazyPRM>(si);
     if (name == "lazyprmstar") return std::make_shared<og::LazyPRMstar>(si);
     if (name == "spars") return std::make_shared<og::SPARS>(si);
     if (name == "spars2") return std::make_shared<og::SPARStwo>(si);
-    // Exploration-based
     if (name == "est") return std::make_shared<og::EST>(si);
     if (name == "biest") return std::make_shared<og::BiEST>(si);
     if (name == "sbl") return std::make_shared<og::SBL>(si);

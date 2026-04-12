@@ -5,6 +5,7 @@ from .motion_planner import (
     available_robots,
     create_planner,
 )
+from .nonholonomic_planner import NonHolonomicConfig, NonHolonomicPlanner
 
 __all__ = [
     "MotionPlannerBase",
@@ -13,4 +14,6 @@ __all__ = [
     "create_planner",
     "Constraint",
     "SymbolicContext",
+    "NonHolonomicConfig",
+    "NonHolonomicPlanner",
 ]

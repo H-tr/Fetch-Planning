@@ -35,21 +35,19 @@ NB_MODULE(_ompl_vamp, m) {
       .def_ro("path_cost", &PlanResult::path_cost);
 
   nb::class_<OmplVampPlanner>(m, "OmplVampPlanner")
-      .def(nb::init<double>(),
-           "Create a full-body planner (11 DOF, base nonholonomic).",
-           nb::arg("turning_radius") = 0.2)
-      .def(nb::init<std::vector<int>, std::vector<double>, double>(),
-           "Create a subgroup planner. When active_indices include the base "
-           "joints (0, 1, 2), the base is planned as a nonholonomic "
-           "ReedsSheppStateSpace; otherwise a plain RealVectorStateSpace is "
-           "used.",
+      .def(nb::init<std::vector<int>, std::vector<double>, int, double>(),
+           "Create a planner.\n\n"
+           "active_indices: joints this planner controls.\n"
+           "frozen_config: full-body config for inactive joints.\n"
+           "base_dim: how many leading active indices form the "
+           "nonholonomic base (0 = arm-only, 3 = SE2 base).\n"
+           "turning_radius: Reeds-Shepp turning radius (metres).",
            nb::arg("active_indices"), nb::arg("frozen_config"),
+           nb::arg("base_dim") = 0,
            nb::arg("turning_radius") = 0.2)
       .def("set_base_bounds", &OmplVampPlanner::set_base_bounds,
            nb::arg("x_lo"), nb::arg("x_hi"), nb::arg("y_lo"), nb::arg("y_hi"),
-           nb::arg("theta_lo") = -M_PI, nb::arg("theta_hi") = M_PI,
-           "Set the base workspace bounds (x, y, theta). Rebuilds the OMPL "
-           "state space in place; call before plan().")
+           nb::arg("theta_lo") = -M_PI, nb::arg("theta_hi") = M_PI)
       .def("add_pointcloud", &OmplVampPlanner::add_pointcloud,
            nb::arg("points"), nb::arg("r_min"), nb::arg("r_max"),
            nb::arg("point_radius"))
