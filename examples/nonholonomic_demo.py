@@ -208,24 +208,11 @@ def apply_attachment(env: PyBulletEnv, link_idx: int, body_id: int, local_tf: np
     client.resetBasePositionAndOrientation(body_id, wp.tolist(), [x, y, z, w])
 
 
-# ── Whole-body planning ──────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────
 
-def plan_whole_body(
-    start_full: np.ndarray,
-    goal_full: np.ndarray,
-    cloud: np.ndarray,
-    label: str,
-    planner_name: str = "rrtc",
-    time_limit: float = NAV_TIME,
-) -> tuple[np.ndarray, float]:
-    """11-DOF whole-body plan: non-holonomic base + linear arm, together."""
-    planner = create_planner(
-        "fetch_whole_body",
-        config=PlannerConfig(planner_name=planner_name, time_limit=time_limit),
-        pointcloud=cloud,
-    )
-    planner.set_base_bounds(**BASE_BOUNDS)
-    result = planner.plan(start_full, goal_full)
+def plan_wb(planner, start, goal, label):
+    """Call plan() on the shared whole-body MotionPlanner and report."""
+    result = planner.plan(start, goal)
     _report(label, result)
     if not result.success or result.path is None:
         raise RuntimeError(f"Planning failed: {label}: {result.status.value}")
@@ -317,6 +304,18 @@ def main(
     current = make_full(BASE_START, TUCK_ARM)
     env.set_configuration(current)
 
+    # Create the planner ONCE — reused for every plan() call.
+    import time as _time
+    t_build = _time.perf_counter()
+    planner = create_planner(
+        "fetch_whole_body",
+        config=PlannerConfig(planner_name=nav_planner, time_limit=nav_time),
+        pointcloud=cloud,
+    )
+    planner.set_base_bounds(**BASE_BOUNDS)
+    t_build = _time.perf_counter() - t_build
+    print(f"  planner built in {t_build*1000:.0f} ms (reused for all calls)")
+
     gripper_link = find_link_index(env, GRIPPER_LINK)
     segments: list[Segment] = []
     client = env.sim.client
@@ -327,8 +326,8 @@ def main(
     # ==================================================================
     print("\n-- stage 1: wb nav to table + unfold arm to pregrasp --")
     pregrasp1 = make_full(BASE_TABLE, PICK1_PREGRASP)
-    path, ms = plan_whole_body(current, pregrasp1, cloud,
-                               "wb: start->table + tuck->pregrasp", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, pregrasp1,
+                        "wb: start->table + tuck->pregrasp")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
                             banner="stage 1: wb nav + unfold arm (base+arm)"))
@@ -357,8 +356,8 @@ def main(
     # ==================================================================
     print("\n-- stage 3: wb carry apple to place spot --")
     preplace1 = make_full(BASE_TABLE_FAR, PLACE1_PREGRASP)
-    path, ms = plan_whole_body(current, preplace1, cloud,
-                               "wb: table->far + carry->preplace", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, preplace1,
+                        "wb: table->far + carry->preplace")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=apple_id, attach_local_tf=apple_tf,
                             banner="stage 3: wb carry apple (base+arm)"))
@@ -382,8 +381,8 @@ def main(
     # ==================================================================
     print("\n-- stage 5: wb nav to mid room + tuck arm --")
     goal_mid = make_full(BASE_MID, TUCK_ARM)
-    path, ms = plan_whole_body(current, goal_mid, cloud,
-                               "wb: far->mid + arm->tuck", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, goal_mid,
+                        "wb: far->mid + arm->tuck")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
                             banner="stage 5: wb nav + tuck arm (base+arm)"))
@@ -399,7 +398,7 @@ def main(
     for i, (base_goal, label) in enumerate(waypoints, start=6):
         print(f"\n-- stage {i}: {label} --")
         goal = make_full(base_goal, TUCK_ARM)
-        path, ms = plan_whole_body(current, goal, cloud, label, nav_planner, nav_time)
+        path, ms = plan_wb(planner, current, goal, label)
         wb_times.append(ms)
         segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
                                 banner=f"stage {i}: {label}"))
@@ -410,8 +409,8 @@ def main(
     # ==================================================================
     print("\n-- stage 8: wb nav to table + unfold arm --")
     pregrasp2 = make_full(BASE_TABLE_FAR, PICK2_PREGRASP)
-    path, ms = plan_whole_body(current, pregrasp2, cloud,
-                               "wb: tea->table + tuck->pregrasp", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, pregrasp2,
+                        "wb: tea->table + tuck->pregrasp")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
                             banner="stage 8: wb nav + unfold arm (base+arm)"))
@@ -440,8 +439,8 @@ def main(
     # ==================================================================
     print("\n-- stage 10: wb carry apple back --")
     preplace2 = make_full(BASE_TABLE, PLACE2_PREGRASP)
-    path, ms = plan_whole_body(current, preplace2, cloud,
-                               "wb: far->table + carry->preplace", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, preplace2,
+                        "wb: far->table + carry->preplace")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=apple_id, attach_local_tf=apple_tf2,
                             banner="stage 10: wb carry apple back (base+arm)"))
@@ -465,8 +464,8 @@ def main(
     # ==================================================================
     print("\n-- stage 12: wb nav home + tuck arm --")
     goal_home = make_full(BASE_START, TUCK_ARM)
-    path, ms = plan_whole_body(current, goal_home, cloud,
-                               "wb: table->start + arm->tuck", nav_planner, nav_time)
+    path, ms = plan_wb(planner, current, goal_home,
+                        "wb: table->start + arm->tuck")
     wb_times.append(ms)
     segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
                             banner="stage 12: wb nav home + tuck (base+arm)"))
