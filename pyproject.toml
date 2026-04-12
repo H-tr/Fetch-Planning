@@ -1,0 +1,24 @@
+[build-system]
+requires = ["scikit-build-core>=0.4.3", "nanobind>=2.0.0", "pybind11>=2.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fetch_planning"
+version = "0.2.0"
+description = "Whole-body Fetch motion planning (OMPL + VAMP)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "pink",
+]
+
+[tool.scikit-build]
+minimum-version = "0.4"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["fetch_planning"]
+cmake.build-type = "Release"
+
+[project.optional-dependencies]
+dev = ["pre-commit", "pybullet"]
