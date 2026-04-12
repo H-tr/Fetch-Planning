@@ -4,7 +4,7 @@ Demonstrates **true whole-body planning** (11 DOF) where base and arm
 move **simultaneously** in a single OMPL call:
 
 * **Base (3 DOF)**: Reeds-Shepp curves enforce non-holonomic
-  differential-drive constraints.
+  differential-drive constraints.  Reverse penalty discourages backing up.
 * **Arm (8 DOF)**: ``RealVectorStateSpace`` with linear interpolation.
 * **Both planned together**: the start and goal differ in *both* base
   pose and arm configuration, so OMPL explores the full 11-DOF space
@@ -34,20 +34,10 @@ import pybullet as pb
 import trimesh
 from fire import Fire
 
-from fetch_planning.config.robot_config import (
-    CHAIN_CONFIGS,
-    HOME_JOINTS,
-    fetch_robot_config,
-)
+from fetch_planning.config.robot_config import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
-from fetch_planning.kinematics.trac_ik_solver import TracIKSolver
 from fetch_planning.planning import create_planner
-from fetch_planning.types import (
-    IKConfig,
-    PlannerConfig,
-    SE3Pose,
-    SolveType,
-)
+from fetch_planning.types import PlannerConfig
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -65,8 +55,6 @@ SCENE_PROPS: list[tuple[str, str]] = [
     ("tea_table", "coffee_table"),
 ]
 
-ARM_SUBGROUP = "fetch_arm_with_torso"
-TORSO_ARM_IDX = np.array([3, 4, 5, 6, 7, 8, 9, 10])
 GRIPPER_LINK = "gripper_link"
 
 # ── Robot base poses (x, y, theta) ────────────────────────────────────
@@ -83,13 +71,38 @@ BASE_TEA = np.array([1.0, 1.0, -np.pi / 2])
 APPLE_ON_TABLE = np.array([-2.30, 1.35, 0.77])
 APPLE_PLACE_SPOT = np.array([-2.10, 1.45, 0.77])
 
+# ── Pre-computed IK solutions (torso + 7-arm) ────────────────────────
+# Computed offline; each pair is collision-free at the corresponding
+# base pose.  No runtime IK needed.
+
+# Pick apple from BASE_TABLE
+PICK1_PREGRASP = np.array([0.32445069, 0.57501428, 0.98200134, -2.09404862,
+                           1.73717401, -1.82980346, 2.14599869, -1.05836049])
+PICK1_GRASP = np.array([0.26168402, 0.38121553, 0.68414124, -2.30476954,
+                        1.37761053, -2.02117134, 2.05609073, -1.11658312])
+
+# Place apple at APPLE_PLACE_SPOT from BASE_TABLE_FAR
+PLACE1_PREGRASP = np.array([0.23418852, -0.19039616, 0.30379228, 1.77299377,
+                            1.31343351, -0.54517405, 0.50889398, -1.34479722])
+PLACE1_GRASP = np.array([0.17713681, -0.00620586, 0.12912140, 1.88172030,
+                         0.70991416, -0.39976887, 0.90754807, -1.44344095])
+
+# Pick apple again from APPLE_PLACE_SPOT at BASE_TABLE_FAR
+PICK2_PREGRASP = np.array([0.24107071, -0.18703498, 0.33452523, 1.79668031,
+                           1.30990650, -0.59485903, 0.52228389, -1.32847864])
+PICK2_GRASP = np.array([0.20053258, 0.00252659, 0.19020634, 1.95317591,
+                        0.70473539, -0.48611653, 0.92348058, -1.45351085])
+
+# Place apple back at APPLE_ON_TABLE from BASE_TABLE
+PLACE2_PREGRASP = np.array([0.33130361, 0.57289324, 1.00113383, -2.10220687,
+                            1.72771426, -1.82364582, 2.13266093, -1.07639876])
+PLACE2_GRASP = np.array([0.26721660, 0.37859320, 0.69650104, -2.31088897,
+                         1.37324950, -2.01473813, 2.04916452, -1.12681534])
+
 # ── Planning parameters ──────────────────────────────────────────────
 
 NAV_TIME = 0.1
 ARM_TIME = 1.0
-PREGRASP_OFFSET = 0.12
-GRASP_Z_ABOVE = 0.18
-
 TUCK_ARM = HOME_JOINTS[3:].copy()
 BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
 
@@ -119,77 +132,12 @@ def place_graspable(env: PyBulletEnv, mesh_name: str, xyz: np.ndarray) -> int:
     return env.add_mesh(path, position=np.asarray(xyz, dtype=float))
 
 
-# ── IK ────────────────────────────────────────────────────────────────
-
-@dataclass
-class IKBundle:
-    solver: TracIKSolver
-    lower: np.ndarray
-    upper: np.ndarray
-
-
-def build_ik_bundle() -> IKBundle:
-    chain = CHAIN_CONFIGS["arm_with_torso"]
-    cfg = IKConfig(
-        timeout=0.3, epsilon=1e-5,
-        solve_type=SolveType.DISTANCE, max_attempts=40,
-    )
-    solver = TracIKSolver(chain, cfg)
-    lo, hi = solver.joint_limits
-    return IKBundle(solver=solver, lower=lo.copy(), upper=hi.copy())
-
-
-def _world_to_base_frame(base_pose: np.ndarray, world_se3: SE3Pose) -> SE3Pose:
-    bx, by, bth = float(base_pose[0]), float(base_pose[1]), float(base_pose[2])
-    c, s = np.cos(bth), np.sin(bth)
-    R_wb = np.array([[c, s, 0], [-s, c, 0], [0, 0, 1]])
-    t_wb = np.array([bx, by, 0.0])
-    return SE3Pose(
-        position=R_wb @ (world_se3.position - t_wb),
-        rotation=R_wb @ world_se3.rotation,
-    )
-
-
-def solve_world_arm_goal(
-    ik: IKBundle, current_full: np.ndarray, world_pose: SE3Pose,
-) -> np.ndarray:
-    local_pose = _world_to_base_frame(current_full[:3], world_pose)
-    result = ik.solver.solve(local_pose, seed=current_full[3:].copy())
-    if not result.success or result.joint_positions is None:
-        raise RuntimeError(
-            f"IK failed for {world_pose.position.tolist()}: "
-            f"{result.status.value}, pos_err={result.position_error:.4f}"
-        )
-    out = current_full.copy()
-    out[3:] = result.joint_positions
-    return out
-
-
-# ── Grasp helpers ─────────────────────────────────────────────────────
-
-def side_grasp_rotation(base_yaw: float) -> np.ndarray:
-    c, s = float(np.cos(base_yaw)), float(np.sin(base_yaw))
-    approach = np.array([c, s, 0.0])
-    y_axis = -approach
-    z_axis = np.array([0.0, 0.0, 1.0])
-    x_axis = np.cross(y_axis, z_axis)
-    return np.column_stack([x_axis, y_axis, z_axis])
-
-
-def build_grasp_pose(
-    object_xyz: np.ndarray, base_yaw: float,
-) -> tuple[SE3Pose, SE3Pose, np.ndarray, np.ndarray]:
-    R = side_grasp_rotation(base_yaw)
-    c, s = float(np.cos(base_yaw)), float(np.sin(base_yaw))
-    approach = np.array([c, s, 0.0])
-    grasp_pos = np.array(object_xyz, dtype=float)
-    grasp_pos[2] += GRASP_Z_ABOVE
-    pregrasp_pos = grasp_pos - PREGRASP_OFFSET * approach
-    return (
-        SE3Pose(position=grasp_pos, rotation=R),
-        SE3Pose(position=pregrasp_pos, rotation=R),
-        grasp_pos, pregrasp_pos,
-    )
+def make_full(base: np.ndarray, arm: np.ndarray) -> np.ndarray:
+    """Build an 11-DOF config from base (3) + arm (8)."""
+    full = HOME_JOINTS.copy()
+    full[:3] = base
+    full[3:] = arm
+    return full
 
 
 # ── Reporting ─────────────────────────────────────────────────────────
@@ -270,11 +218,7 @@ def plan_whole_body(
     planner_name: str = "rrtc",
     time_limit: float = NAV_TIME,
 ) -> tuple[np.ndarray, float]:
-    """11-DOF whole-body plan: non-holonomic base + linear arm, together.
-
-    *start_full* and *goal_full* are both 11-DOF.  When the base AND
-    arm portions differ, the robot moves both simultaneously.
-    """
+    """11-DOF whole-body plan: non-holonomic base + linear arm, together."""
     planner = create_planner(
         "fetch_whole_body",
         config=PlannerConfig(planner_name=planner_name, time_limit=time_limit),
@@ -284,22 +228,17 @@ def plan_whole_body(
     result = planner.plan(start_full, goal_full)
     _report(label, result)
     if not result.success or result.path is None:
-        raise RuntimeError(f"Whole-body planning failed: {label}: {result.status.value}")
+        raise RuntimeError(f"Planning failed: {label}: {result.status.value}")
     return result.path, result.planning_time_ns / 1e6
 
 
-# ── Linear interpolation (grasp approach / retreat only) ─────────────
-
-def _linear_path(start_full: np.ndarray, end_full: np.ndarray, steps: int = 30) -> np.ndarray:
-    """Short linear interpolation for the final grasp approach / retreat.
-
-    Base is kept fixed — only arm moves linearly.
-    """
+def _linear_path(start: np.ndarray, end: np.ndarray, steps: int = 30) -> np.ndarray:
+    """Linear interpolation (arm only, base fixed). For grasp approach/retreat."""
     t = np.linspace(0, 1, steps)
     path = np.empty((steps, 11))
     for i in range(steps):
-        path[i] = start_full + t[i] * (end_full - start_full)
-        path[i, :3] = start_full[:3]
+        path[i] = start + t[i] * (end - start)
+        path[i, :3] = start[:3]
     return path
 
 
@@ -361,7 +300,6 @@ def main(
 
     env = PyBulletEnv(fetch_robot_config, visualize=visualize)
 
-    # ── Load scene ────────────────────────────────────────────────────
     print("\n-- loading scene --")
     load_room_meshes(env)
     cloud = load_room_pointcloud(stride=pcd_stride)
@@ -370,271 +308,168 @@ def main(
 
     if visualize:
         env.sim.client.resetDebugVisualizerCamera(
-            cameraDistance=3.5,
-            cameraYaw=-90.0,
-            cameraPitch=-25.0,
+            cameraDistance=3.5, cameraYaw=-90.0, cameraPitch=-25.0,
             cameraTargetPosition=[-1.5, 0.5, 0.9],
         )
 
     apple_id = place_graspable(env, "apple", APPLE_ON_TABLE)
 
-    current = HOME_JOINTS.copy()
-    current[:3] = BASE_START
+    current = make_full(BASE_START, TUCK_ARM)
     env.set_configuration(current)
 
     gripper_link = find_link_index(env, GRIPPER_LINK)
-    ik = build_ik_bundle()
-
     segments: list[Segment] = []
     client = env.sim.client
     wb_times: list[float] = []
 
     # ==================================================================
-    # Stage 1: WHOLE-BODY start -> table + unfold arm to pregrasp
-    #   Base moves from start to table, arm moves from tuck to pregrasp
-    #   — both happen simultaneously in one plan call.
+    # Stage 1: WHOLE-BODY start -> table + tuck -> pregrasp
     # ==================================================================
-    print("\n-- stage 1: whole-body nav to table + unfold arm to pregrasp --")
-    base_yaw_table = float(BASE_TABLE[2])
-    grasp_pose, pregrasp_pose, _, _ = build_grasp_pose(APPLE_ON_TABLE, base_yaw_table)
-
-    # Build the 11-DOF goal: base at table, arm at pregrasp
-    goal_at_table = current.copy()
-    goal_at_table[:3] = BASE_TABLE
-    pregrasp_full = solve_world_arm_goal(ik, goal_at_table, pregrasp_pose)
-    # pregrasp_full now has base=TABLE, arm=pregrasp config
-
-    path, ms = plan_whole_body(
-        current, pregrasp_full, cloud,
-        "wb: start->table + tuck->pregrasp", nav_planner, nav_time,
-    )
+    print("\n-- stage 1: wb nav to table + unfold arm to pregrasp --")
+    pregrasp1 = make_full(BASE_TABLE, PICK1_PREGRASP)
+    path, ms = plan_whole_body(current, pregrasp1, cloud,
+                               "wb: start->table + tuck->pregrasp", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 1: wb nav + unfold arm (base+arm simultaneous)",
-    ))
+    segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 1: wb nav + unfold arm (base+arm)"))
     current = path[-1].copy()
 
     # ==================================================================
-    # Stage 2: Grasp approach + grasp (short linear, arm only)
+    # Stage 2: Grasp approach + lift (arm-only linear)
     # ==================================================================
-    print("\n-- stage 2: grasp approach --")
-    grasp_full = solve_world_arm_goal(ik, current, grasp_pose)
-    approach = _linear_path(current, grasp_full, steps=30)
-    segments.append(Segment(
-        path=approach, attach_body_id=None, attach_local_tf=None,
-        banner="stage 2: grasp approach (arm only)",
-    ))
+    print("\n-- stage 2: grasp apple --")
+    grasp1 = make_full(BASE_TABLE, PICK1_GRASP)
+    approach = _linear_path(current, grasp1, steps=30)
+    segments.append(Segment(path=approach, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 2: grasp approach (arm only)"))
 
-    # Capture apple attachment at grasp config.
-    env.set_configuration(grasp_full)
+    env.set_configuration(grasp1)
     client.resetBasePositionAndOrientation(apple_id, APPLE_ON_TABLE.tolist(), [0, 0, 0, 1])
     apple_tf = capture_local_transform(env, gripper_link, apple_id)
 
-    # Lift back to pregrasp.
-    lift = _linear_path(grasp_full, pregrasp_full, steps=30)
-    segments.append(Segment(
-        path=lift, attach_body_id=apple_id,
-        attach_local_tf=apple_tf, banner="stage 2: lift apple",
-    ))
-    current = pregrasp_full.copy()
+    lift = _linear_path(grasp1, pregrasp1, steps=30)
+    segments.append(Segment(path=lift, attach_body_id=apple_id,
+                            attach_local_tf=apple_tf, banner="stage 2: lift apple"))
+    current = pregrasp1.copy()
 
     # ==================================================================
-    # Stage 3: WHOLE-BODY carry apple to place spot
-    #   Base moves table -> table_far, arm transitions carrying -> pre-place
+    # Stage 3: WHOLE-BODY carry apple table -> table_far + arm -> pre-place
     # ==================================================================
-    print("\n-- stage 3: whole-body carry apple to place spot --")
-    base_yaw_far = float(BASE_TABLE_FAR[2])
-    place_pose, pre_place_pose, _, _ = build_grasp_pose(APPLE_PLACE_SPOT, base_yaw_far)
-
-    goal_at_far = current.copy()
-    goal_at_far[:3] = BASE_TABLE_FAR
-    pre_place_full = solve_world_arm_goal(ik, goal_at_far, pre_place_pose)
-
-    path, ms = plan_whole_body(
-        current, pre_place_full, cloud,
-        "wb: table->far + carry->preplace", nav_planner, nav_time,
-    )
+    print("\n-- stage 3: wb carry apple to place spot --")
+    preplace1 = make_full(BASE_TABLE_FAR, PLACE1_PREGRASP)
+    path, ms = plan_whole_body(current, preplace1, cloud,
+                               "wb: table->far + carry->preplace", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=apple_id,
-        attach_local_tf=apple_tf,
-        banner="stage 3: wb carry apple (base+arm simultaneous)",
-    ))
+    segments.append(Segment(path=path, attach_body_id=apple_id, attach_local_tf=apple_tf,
+                            banner="stage 3: wb carry apple (base+arm)"))
     current = path[-1].copy()
 
     # ==================================================================
-    # Stage 4: Place apple (short linear, arm only)
+    # Stage 4: Place apple (arm-only linear)
     # ==================================================================
     print("\n-- stage 4: place apple --")
-    place_full = solve_world_arm_goal(ik, current, place_pose)
-    lower = _linear_path(current, place_full, steps=30)
-    segments.append(Segment(
-        path=lower, attach_body_id=apple_id,
-        attach_local_tf=apple_tf, banner="stage 4: lower apple",
-    ))
-
-    retreat = _linear_path(place_full, pre_place_full, steps=30)
-    segments.append(Segment(
-        path=retreat, attach_body_id=None, attach_local_tf=None,
-        banner="stage 4: retreat",
-    ))
-    current = pre_place_full.copy()
+    place1 = make_full(BASE_TABLE_FAR, PLACE1_GRASP)
+    lower = _linear_path(current, place1, steps=30)
+    segments.append(Segment(path=lower, attach_body_id=apple_id, attach_local_tf=apple_tf,
+                            banner="stage 4: lower apple"))
+    retreat = _linear_path(place1, preplace1, steps=30)
+    segments.append(Segment(path=retreat, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 4: retreat"))
+    current = preplace1.copy()
 
     # ==================================================================
-    # Stage 5: WHOLE-BODY tour: table_far -> mid room + tuck arm
+    # Stage 5: WHOLE-BODY table_far -> mid + arm -> tuck
     # ==================================================================
-    print("\n-- stage 5: whole-body nav to mid room + tuck arm --")
-    goal_mid = HOME_JOINTS.copy()
-    goal_mid[:3] = BASE_MID
-    # arm goes to tuck during navigation
-    path, ms = plan_whole_body(
-        current, goal_mid, cloud,
-        "wb: table_far->mid + arm->tuck", nav_planner, nav_time,
-    )
+    print("\n-- stage 5: wb nav to mid room + tuck arm --")
+    goal_mid = make_full(BASE_MID, TUCK_ARM)
+    path, ms = plan_whole_body(current, goal_mid, cloud,
+                               "wb: far->mid + arm->tuck", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 5: wb nav + tuck arm (base+arm simultaneous)",
-    ))
+    segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 5: wb nav + tuck arm (base+arm)"))
     current = path[-1].copy()
 
     # ==================================================================
-    # Stage 6: WHOLE-BODY mid -> sofa (arm stays tucked)
+    # Stages 6-7: WHOLE-BODY tour (arm stays tucked)
     # ==================================================================
-    print("\n-- stage 6: whole-body nav mid -> sofa --")
-    goal_sofa = current.copy()
-    goal_sofa[:3] = BASE_SOFA
-    path, ms = plan_whole_body(
-        current, goal_sofa, cloud,
-        "wb: mid->sofa", nav_planner, nav_time,
-    )
+    waypoints = [
+        (BASE_SOFA, "wb: mid->sofa"),
+        (BASE_TEA, "wb: sofa->tea_table"),
+    ]
+    for i, (base_goal, label) in enumerate(waypoints, start=6):
+        print(f"\n-- stage {i}: {label} --")
+        goal = make_full(base_goal, TUCK_ARM)
+        path, ms = plan_whole_body(current, goal, cloud, label, nav_planner, nav_time)
+        wb_times.append(ms)
+        segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
+                                banner=f"stage {i}: {label}"))
+        current = path[-1].copy()
+
+    # ==================================================================
+    # Stage 8: WHOLE-BODY tea_table -> table_far + tuck -> pregrasp
+    # ==================================================================
+    print("\n-- stage 8: wb nav to table + unfold arm --")
+    pregrasp2 = make_full(BASE_TABLE_FAR, PICK2_PREGRASP)
+    path, ms = plan_whole_body(current, pregrasp2, cloud,
+                               "wb: tea->table + tuck->pregrasp", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 6: wb nav mid -> sofa",
-    ))
+    segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 8: wb nav + unfold arm (base+arm)"))
     current = path[-1].copy()
 
     # ==================================================================
-    # Stage 7: WHOLE-BODY sofa -> tea table (arm stays tucked)
-    # ==================================================================
-    print("\n-- stage 7: whole-body nav sofa -> tea table --")
-    goal_tea = current.copy()
-    goal_tea[:3] = BASE_TEA
-    path, ms = plan_whole_body(
-        current, goal_tea, cloud,
-        "wb: sofa->tea_table", nav_planner, nav_time,
-    )
-    wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 7: wb nav sofa -> tea table",
-    ))
-    current = path[-1].copy()
-
-    # ==================================================================
-    # Stage 8: WHOLE-BODY tea table -> table_far + unfold arm to pregrasp
-    #   Navigate back AND prepare arm for second apple pick simultaneously
-    # ==================================================================
-    print("\n-- stage 8: whole-body nav to table + unfold arm to pregrasp --")
-    base_yaw_far2 = float(BASE_TABLE_FAR[2])
-    grasp_pose2, pregrasp_pose2, _, _ = build_grasp_pose(APPLE_PLACE_SPOT, base_yaw_far2)
-
-    goal_table2 = current.copy()
-    goal_table2[:3] = BASE_TABLE_FAR
-    pregrasp_full2 = solve_world_arm_goal(ik, goal_table2, pregrasp_pose2)
-
-    path, ms = plan_whole_body(
-        current, pregrasp_full2, cloud,
-        "wb: tea->table + tuck->pregrasp", nav_planner, nav_time,
-    )
-    wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 8: wb nav + unfold arm (base+arm simultaneous)",
-    ))
-    current = path[-1].copy()
-
-    # ==================================================================
-    # Stage 9: Pick apple again (arm only)
+    # Stage 9: Pick apple again (arm-only linear)
     # ==================================================================
     print("\n-- stage 9: pick apple again --")
-    grasp_full2 = solve_world_arm_goal(ik, current, grasp_pose2)
-    approach2 = _linear_path(current, grasp_full2, steps=30)
-    segments.append(Segment(
-        path=approach2, attach_body_id=None, attach_local_tf=None,
-        banner="stage 9: grasp approach (arm only)",
-    ))
+    grasp2 = make_full(BASE_TABLE_FAR, PICK2_GRASP)
+    approach2 = _linear_path(current, grasp2, steps=30)
+    segments.append(Segment(path=approach2, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 9: grasp approach (arm only)"))
 
-    env.set_configuration(grasp_full2)
+    env.set_configuration(grasp2)
     client.resetBasePositionAndOrientation(apple_id, APPLE_PLACE_SPOT.tolist(), [0, 0, 0, 1])
     apple_tf2 = capture_local_transform(env, gripper_link, apple_id)
 
-    lift2 = _linear_path(grasp_full2, pregrasp_full2, steps=30)
-    segments.append(Segment(
-        path=lift2, attach_body_id=apple_id,
-        attach_local_tf=apple_tf2, banner="stage 9: lift apple",
-    ))
-    current = pregrasp_full2.copy()
+    lift2 = _linear_path(grasp2, pregrasp2, steps=30)
+    segments.append(Segment(path=lift2, attach_body_id=apple_id,
+                            attach_local_tf=apple_tf2, banner="stage 9: lift apple"))
+    current = pregrasp2.copy()
 
     # ==================================================================
-    # Stage 10: WHOLE-BODY carry apple back to original spot
-    #   Base: table_far -> table, arm: carrying -> pre-place
+    # Stage 10: WHOLE-BODY carry apple far -> table + arm -> pre-place
     # ==================================================================
-    print("\n-- stage 10: whole-body carry apple back --")
-    base_yaw_orig = float(BASE_TABLE[2])
-    place_pose_orig, pre_place_pose_orig, _, _ = build_grasp_pose(APPLE_ON_TABLE, base_yaw_orig)
-
-    goal_orig = current.copy()
-    goal_orig[:3] = BASE_TABLE
-    pre_place_orig = solve_world_arm_goal(ik, goal_orig, pre_place_pose_orig)
-
-    path, ms = plan_whole_body(
-        current, pre_place_orig, cloud,
-        "wb: far->table + carry->preplace", nav_planner, nav_time,
-    )
+    print("\n-- stage 10: wb carry apple back --")
+    preplace2 = make_full(BASE_TABLE, PLACE2_PREGRASP)
+    path, ms = plan_whole_body(current, preplace2, cloud,
+                               "wb: far->table + carry->preplace", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=apple_id,
-        attach_local_tf=apple_tf2,
-        banner="stage 10: wb carry apple back (base+arm simultaneous)",
-    ))
+    segments.append(Segment(path=path, attach_body_id=apple_id, attach_local_tf=apple_tf2,
+                            banner="stage 10: wb carry apple back (base+arm)"))
     current = path[-1].copy()
 
     # ==================================================================
-    # Stage 11: Place apple back (arm only)
+    # Stage 11: Place apple back (arm-only linear)
     # ==================================================================
     print("\n-- stage 11: place apple back --")
-    place_full_orig = solve_world_arm_goal(ik, current, place_pose_orig)
-    lower2 = _linear_path(current, place_full_orig, steps=30)
-    segments.append(Segment(
-        path=lower2, attach_body_id=apple_id,
-        attach_local_tf=apple_tf2, banner="stage 11: lower apple",
-    ))
-
-    retreat2 = _linear_path(place_full_orig, pre_place_orig, steps=30)
-    segments.append(Segment(
-        path=retreat2, attach_body_id=None, attach_local_tf=None,
-        banner="stage 11: retreat",
-    ))
-    current = pre_place_orig.copy()
+    place2 = make_full(BASE_TABLE, PLACE2_GRASP)
+    lower2 = _linear_path(current, place2, steps=30)
+    segments.append(Segment(path=lower2, attach_body_id=apple_id, attach_local_tf=apple_tf2,
+                            banner="stage 11: lower apple"))
+    retreat2 = _linear_path(place2, preplace2, steps=30)
+    segments.append(Segment(path=retreat2, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 11: retreat"))
+    current = preplace2.copy()
 
     # ==================================================================
-    # Stage 12: WHOLE-BODY return to start + tuck arm
+    # Stage 12: WHOLE-BODY return home + tuck arm
     # ==================================================================
-    print("\n-- stage 12: whole-body nav home + tuck arm --")
-    goal_home = HOME_JOINTS.copy()
-    goal_home[:3] = BASE_START
-    path, ms = plan_whole_body(
-        current, goal_home, cloud,
-        "wb: table->start + arm->tuck", nav_planner, nav_time,
-    )
+    print("\n-- stage 12: wb nav home + tuck arm --")
+    goal_home = make_full(BASE_START, TUCK_ARM)
+    path, ms = plan_whole_body(current, goal_home, cloud,
+                               "wb: table->start + arm->tuck", nav_planner, nav_time)
     wb_times.append(ms)
-    segments.append(Segment(
-        path=path, attach_body_id=None, attach_local_tf=None,
-        banner="stage 12: wb nav home + tuck (base+arm simultaneous)",
-    ))
+    segments.append(Segment(path=path, attach_body_id=None, attach_local_tf=None,
+                            banner="stage 12: wb nav home + tuck (base+arm)"))
 
     # ==================================================================
     # Summary
@@ -656,7 +491,6 @@ def main(
 
     env.set_configuration(segments[0].path[0])
     client.resetBasePositionAndOrientation(apple_id, APPLE_ON_TABLE.tolist(), [0, 0, 0, 1])
-
     print(f"\n-- ready: {total_wp:,} total frames --")
     play_segments(env, segments, gripper_link)
 

@@ -35,16 +35,19 @@ NB_MODULE(_ompl_vamp, m) {
       .def_ro("path_cost", &PlanResult::path_cost);
 
   nb::class_<OmplVampPlanner>(m, "OmplVampPlanner")
-      .def(nb::init<std::vector<int>, std::vector<double>, int, double>(),
+      .def(nb::init<std::vector<int>, std::vector<double>, int, double, double>(),
            "Create a planner.\n\n"
            "active_indices: joints this planner controls.\n"
            "frozen_config: full-body config for inactive joints.\n"
            "base_dim: how many leading active indices form the "
            "nonholonomic base (0 = arm-only, 3 = SE2 base).\n"
-           "turning_radius: Reeds-Shepp turning radius (metres).",
+           "turning_radius: Reeds-Shepp turning radius (metres).\n"
+           "reverse_penalty: cost multiplier for reverse segments "
+           "(1.0 = no penalty, >1.0 = discourage backing up).",
            nb::arg("active_indices"), nb::arg("frozen_config"),
            nb::arg("base_dim") = 0,
-           nb::arg("turning_radius") = 0.2)
+           nb::arg("turning_radius") = 0.2,
+           nb::arg("reverse_penalty") = 1.0)
       .def("set_base_bounds", &OmplVampPlanner::set_base_bounds,
            nb::arg("x_lo"), nb::arg("x_hi"), nb::arg("y_lo"), nb::arg("y_hi"),
            nb::arg("theta_lo") = -M_PI, nb::arg("theta_hi") = M_PI)

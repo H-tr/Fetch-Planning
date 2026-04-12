@@ -83,6 +83,33 @@ namespace fetch_planning {
 
 namespace og = ompl::geometric;
 
+/// ReedsSheppStateSpace with a multiplicative penalty on reverse segments.
+///
+/// The standard distance() returns ``rho * sum(|seg_i|)``.  This
+/// subclass replaces it with ``rho * sum(w_i * |seg_i|)`` where
+/// ``w_i = reverse_penalty`` for segments with negative length (reverse)
+/// and ``w_i = 1`` otherwise.  A penalty of 1.0 recovers the standard
+/// behaviour; larger values steer the planner away from backing up.
+class PenalizedReedsSheppStateSpace : public ob::ReedsSheppStateSpace {
+ public:
+  PenalizedReedsSheppStateSpace(double turningRadius, double reverse_penalty)
+      : ob::ReedsSheppStateSpace(turningRadius),
+        reverse_penalty_(reverse_penalty) {}
+
+  double distance(const ob::State *s1, const ob::State *s2) const override {
+    auto path = getPath(s1, s2);
+    double cost = 0.0;
+    for (int i = 0; i < 5; ++i) {
+      double seg = std::fabs(path.length_[i]);
+      cost += (path.length_[i] < 0.0 ? reverse_penalty_ : 1.0) * seg;
+    }
+    return rho_ * cost;
+  }
+
+ private:
+  double reverse_penalty_;
+};
+
 struct PlanResult {
   bool solved;
   std::vector<std::vector<double>> path;
@@ -107,11 +134,13 @@ class OmplVampPlanner {
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config,
                   int base_dim = 0,
-                  double turning_radius = 0.2)
+                  double turning_radius = 0.2,
+                  double reverse_penalty = 1.0)
       : active_dim_(static_cast<int>(active_indices.size())),
         active_indices_(std::move(active_indices)),
         base_dim_(base_dim),
-        turning_radius_(turning_radius) {
+        turning_radius_(turning_radius),
+        reverse_penalty_(reverse_penalty) {
     frozen_config_.resize(frozen_config.size());
     for (std::size_t i = 0; i < frozen_config.size(); ++i)
       frozen_config_[i] = static_cast<float>(frozen_config[i]);
@@ -303,6 +332,7 @@ class OmplVampPlanner {
   bool has_base_ = false;
   bool base_only_ = false;
   double turning_radius_;
+  double reverse_penalty_;
 
   double base_x_lo_ = -10.0;
   double base_x_hi_ = 10.0;
@@ -333,7 +363,8 @@ class OmplVampPlanner {
     auto hi_arr = hi.to_array();
 
     if (has_base_) {
-      auto se2 = std::make_shared<ob::ReedsSheppStateSpace>(turning_radius_);
+      auto se2 = std::make_shared<PenalizedReedsSheppStateSpace>(
+          turning_radius_, reverse_penalty_);
       ob::RealVectorBounds se2_bounds(2);
       se2_bounds.setLow(0, base_x_lo_);
       se2_bounds.setHigh(0, base_x_hi_);

@@ -3,7 +3,7 @@
 A single end-to-end showcase of the project's planning stack:
 
 * **Subgroup planning** — navigation uses ``fetch_base`` with
-  BiT\* (asymptotically optimal), grasping uses
+  BIT* (asymptotically optimal), grasping uses
   ``fetch_arm_with_torso`` with RRTConnect (feasibility).
 * **Collision avoidance** — every planning call is handed the
   151k-point cloud concatenated from all seven ``pcd/*.ply`` files in
@@ -22,7 +22,7 @@ Storyline (one PyBullet window, one concatenated path):
     1. robot spawns inside the room next to the big table
     2. pick apple from the table top
     3. place apple back on the table (different spot)
-    4. base-navigate across the room to the sofa (BiT\*)
+    4. base-navigate across the room to the sofa (BIT*)
     5. pick bottle from the sofa
     6. base-navigate back to the table
     7. place bottle beside the apple
@@ -38,27 +38,18 @@ import os
 import time
 from dataclasses import dataclass
 
-import casadi as ca
 import numpy as np
 import pybullet as pb
 import trimesh
 from fire import Fire
 
 from fetch_planning.config.robot_config import (
-    CHAIN_CONFIGS,
     HOME_JOINTS,
     fetch_robot_config,
 )
 from fetch_planning.envs.pybullet_env import PyBulletEnv
-from fetch_planning.kinematics.trac_ik_solver import TracIKSolver
-from fetch_planning.planning import Constraint, SymbolicContext, create_planner
-from fetch_planning.types import (
-    ChainConfig,
-    IKConfig,
-    PlannerConfig,
-    SE3Pose,
-    SolveType,
-)
+from fetch_planning.planning import create_planner
+from fetch_planning.types import PlannerConfig
 
 # ── Constants ──────────────────────────────────────────────────────
 # Subgroup names from fetch_planning.config.robot_config.
@@ -102,7 +93,7 @@ SCENE_PROPS: list[tuple[str, str]] = [
 # ── Hard-coded poses ────────────────────────────────────────────────
 # Robot base poses (base_x, base_y, base_theta).
 BASE_NEAR_TABLE = np.array([-2.00, 0.70, np.pi / 2])
-BASE_NEAR_SOFA = np.array([1.15, 0.30, 0.0])
+BASE_NEAR_SOFA = np.array([1.30, 0.30, 0.0])
 
 # Graspable object positions (world xyz).
 APPLE_ON_TABLE = np.array([-2.30, 1.35, 0.77])
@@ -120,6 +111,33 @@ BASE_NAV_TIME = 5.0
 
 # The finger midpoint sits this far above the object centroid.
 GRASP_Z_ABOVE_OBJECT = 0.18
+
+# ── Pre-computed IK solutions (torso + 7-arm) ────────────────────────
+# Computed offline; each pair is collision-free at the corresponding
+# base pose.  Avoids runtime IK which can produce configs in collision.
+
+IK_CONFIGS = {
+    # Pick apple from BASE_NEAR_TABLE
+    "apple_pick_pregrasp": np.array([0.32445069, 0.57501428, 0.98200134, -2.09404862,
+                                     1.73717401, -1.82980346, 2.14599869, -1.05836049]),
+    "apple_pick_grasp": np.array([0.26168402, 0.38121553, 0.68414124, -2.30476954,
+                                  1.37761053, -2.02117134, 2.05609073, -1.11658312]),
+    # Place apple at APPLE_PLACE_ON_TABLE from BASE_NEAR_TABLE
+    "apple_place_pregrasp": np.array([0.27224133, -0.83557874, 0.30474560, 1.66042957,
+                                      1.26729150, -0.31350705, 1.15156181, -1.57976135]),
+    "apple_place_grasp": np.array([0.20785453, -0.54761592, 0.12480686, 1.72785105,
+                                   0.67531648, -0.20026745, 1.45291468, -1.57094055]),
+    # Pick bottle from BASE_NEAR_SOFA (at [1.30, 0.30, 0.0])
+    "bottle_pick_pregrasp": np.array([0.20526269, -1.12212647, 0.37696001, 1.73587964,
+                                      1.48086298, -0.43037699, 1.26964848, -1.44573779]),
+    "bottle_pick_grasp": np.array([0.16308084, -0.85628128, 0.24299066, 1.85188482,
+                                   1.04097707, -0.36762634, 1.44126883, -1.45888777]),
+    # Place bottle at BOTTLE_PLACE_ON_TABLE from BASE_NEAR_TABLE
+    "bottle_place_pregrasp": np.array([0.22384768, -0.28792844, 0.29960031, 1.77882154,
+                                       1.37746789, -0.56351064, 0.55182043, -1.30649913]),
+    "bottle_place_grasp": np.array([0.17402181, -0.09840460, 0.15667748, 1.93137590,
+                                    0.79536474, -0.47117760, 0.93580737, -1.39646943]),
+}
 
 
 # ── Scene setup ────────────────────────────────────────────────────
@@ -145,112 +163,6 @@ def load_room_pointcloud(stride: int = 1) -> np.ndarray:
 def place_graspable(env: PyBulletEnv, mesh_name: str, xyz: np.ndarray) -> int:
     path = os.path.abspath(f"{MESH_DIR}/{mesh_name}/{mesh_name}.obj")
     return env.add_mesh(path, position=np.asarray(xyz, dtype=float))
-
-
-# ── CasADi / SymbolicContext helpers ───────────────────────────────
-
-def gripper_translation(ctx: SymbolicContext) -> ca.SX:
-    return ctx.link_translation(GRIPPER_LINK)
-
-
-def gripper_position_numeric(ctx: SymbolicContext, q_active: np.ndarray) -> np.ndarray:
-    return np.asarray(ctx.evaluate_link_pose(GRIPPER_LINK, q_active))[:3, 3]
-
-
-def make_line_constraint(
-    ctx: SymbolicContext,
-    p_from: np.ndarray,
-    p_to: np.ndarray,
-    name: str,
-) -> Constraint:
-    """Pin the gripper link to the line through *p_from* -> *p_to*."""
-    p_from = np.asarray(p_from, dtype=float)
-    p_to = np.asarray(p_to, dtype=float)
-    d = p_to - p_from
-    d_norm = float(np.linalg.norm(d))
-    if d_norm < 1e-9:
-        raise ValueError("make_line_constraint: p_from and p_to coincide")
-    d = d / d_norm
-    seed = np.array([1.0, 0.0, 0.0]) if abs(d[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-    u = np.cross(d, seed)
-    u /= np.linalg.norm(u)
-    v = np.cross(d, u)
-
-    gripper = gripper_translation(ctx)
-    diff = gripper - ca.DM(p_from.tolist())
-    residual: ca.SX = ca.vertcat(
-        ca.dot(diff, ca.DM(u.tolist())),
-        ca.dot(diff, ca.DM(v.tolist())),
-    )
-    return Constraint(residual=residual, q_sym=ctx.q, name=name)
-
-
-# ── World-frame IK ─────────────────────────────────────────────────
-
-@dataclass
-class IKBundle:
-    """Cached TRAC-IK solver for the whole_body chain."""
-    solver: TracIKSolver
-    lower: np.ndarray
-    upper: np.ndarray
-
-
-def build_ik_bundle() -> IKBundle:
-    """TRAC-IK solver from ``base_link`` to ``gripper_link`` (11 DOF)."""
-    chain = ChainConfig(
-        base_link="base_link",
-        ee_link=GRIPPER_LINK,
-        num_joints=11,
-        urdf_path=CHAIN_CONFIGS["whole_body"].urdf_path,
-    )
-    cfg = IKConfig(
-        timeout=0.3,
-        epsilon=1e-5,
-        solve_type=SolveType.DISTANCE,
-        max_attempts=40,
-    )
-    solver = TracIKSolver(chain, cfg)
-    lo, hi = solver.joint_limits
-    return IKBundle(solver=solver, lower=lo.copy(), upper=hi.copy())
-
-
-def solve_world_arm_goal(
-    ik: IKBundle,
-    current_full: np.ndarray,
-    world_pose: SE3Pose,
-) -> np.ndarray:
-    """Solve torso+arm joint values for a world-frame gripper pose.
-
-    * ``current_full`` is the live 11-DOF body configuration.
-    * The IK chain has 11 DOF: ``[base_x, base_y, base_theta,
-      torso_lift, arm x 7]``.
-    * We tight-clamp the base joints (0..2) to their current values
-      so only the torso + arm (joints 3..10) move — matching the
-      ``fetch_arm_with_torso`` subgroup that will plan around this goal.
-    """
-    seed = np.array(current_full, dtype=np.float64)
-    eps = 1e-4
-    lower = ik.lower.copy()
-    upper = ik.upper.copy()
-    for i in range(3):  # base (0, 1, 2)
-        lower[i] = seed[i] - eps
-        upper[i] = seed[i] + eps
-    ik.solver.set_joint_limits(lower, upper)
-    try:
-        result = ik.solver.solve(world_pose, seed=seed)
-    finally:
-        ik.solver.set_joint_limits(ik.lower, ik.upper)
-
-    if not result.success or result.joint_positions is None:
-        raise RuntimeError(
-            f"IK failed for target {world_pose.position.tolist()}: "
-            f"status={result.status.value} pos_err={result.position_error:.4f}"
-        )
-    new_full = current_full.copy()
-    new_full[:] = result.joint_positions
-    # Re-force base exactly — the solver is within +/- eps.
-    new_full[:3] = current_full[:3]
-    return new_full
 
 
 # ── Planning wrappers ──────────────────────────────────────────────
@@ -281,46 +193,13 @@ def plan_arm_free(
     return planner.embed_path(result.path)
 
 
-def plan_arm_line(
-    current_full: np.ndarray,
-    goal_full: np.ndarray,
-    p_from: np.ndarray,
-    p_to: np.ndarray,
-    pointcloud: np.ndarray,
-    label: str,
-) -> np.ndarray:
-    """Line-constrained plan on the torso+arm subgroup.  Returns (N, 11)."""
-    ctx = SymbolicContext(ARM_SUBGROUP, base_config=current_full)
-    constraint = make_line_constraint(
-        ctx, p_from, p_to, name=f"line_{label.replace(' ', '_')}"
-    )
-
-    raw_start = _extract_torso_arm(current_full)
-    raw_goal = _extract_torso_arm(goal_full)
-    start = ctx.project(raw_start, constraint.residual)
-    goal = ctx.project(raw_goal, constraint.residual)
-
-    planner = create_planner(
-        ARM_SUBGROUP,
-        config=PlannerConfig(planner_name="rrtc", time_limit=ARM_LINE_TIME),
-        pointcloud=pointcloud,
-        base_config=current_full,
-        constraints=[constraint],
-    )
-    result = planner.plan(start, goal)
-    _report(label, result)
-    if not result.success or result.path is None:
-        raise RuntimeError(f"{label}: {result.status.value}")
-    return planner.embed_path(result.path)
-
-
 def plan_base(
     current_full: np.ndarray,
     base_goal: np.ndarray,
     pointcloud: np.ndarray,
     label: str,
 ) -> np.ndarray:
-    """BiT\* base navigation (3 DOF: x, y, theta).  Returns (N, 11)."""
+    """BIT* base navigation (3 DOF: x, y, theta).  Returns (N, 11)."""
     planner = create_planner(
         BASE_SUBGROUP,
         config=PlannerConfig(planner_name="bitstar", time_limit=BASE_NAV_TIME),
@@ -344,37 +223,6 @@ def _report(label: str, result) -> None:
     )
 
 
-# ── Grasp pose builder ─────────────────────────────────────────────
-
-def side_grasp_rotation(base_yaw: float) -> np.ndarray:
-    """Rotation for a horizontal side grasp aligned with the robot."""
-    c, s = float(np.cos(base_yaw)), float(np.sin(base_yaw))
-    approach = np.array([c, s, 0.0])
-    y_axis = -approach
-    z_axis = np.array([0.0, 0.0, 1.0])
-    x_axis = np.cross(y_axis, z_axis)
-    return np.column_stack([x_axis, y_axis, z_axis])
-
-
-def build_grasp_pose(
-    object_xyz: np.ndarray, base_yaw: float
-) -> tuple[SE3Pose, SE3Pose, np.ndarray, np.ndarray]:
-    """Return ``(grasp_pose, pregrasp_pose, grasp_pos, pregrasp_pos)``."""
-    R = side_grasp_rotation(base_yaw)
-    c, s = float(np.cos(base_yaw)), float(np.sin(base_yaw))
-    approach = np.array([c, s, 0.0])
-
-    finger_target = np.array(object_xyz, dtype=float)
-    finger_target[2] += GRASP_Z_ABOVE_OBJECT
-
-    grasp_pos = finger_target - R @ FINGER_MIDPOINT_IN_GRIPPER
-    pregrasp_pos = grasp_pos - PREGRASP_OFFSET * approach
-
-    grasp_pose = SE3Pose(position=grasp_pos, rotation=R)
-    pregrasp_pose = SE3Pose(position=pregrasp_pos, rotation=R)
-    return grasp_pose, pregrasp_pose, grasp_pos, pregrasp_pos
-
-
 # ── Path segment bookkeeping ───────────────────────────────────────
 
 @dataclass
@@ -387,64 +235,61 @@ class Segment:
 
 # ── High-level actions ─────────────────────────────────────────────
 
+def _make_full(base: np.ndarray, arm: np.ndarray) -> np.ndarray:
+    full = HOME_JOINTS.copy()
+    full[:3] = base
+    full[3:] = arm
+    return full
+
+
+def _linear_arm_path(start_full: np.ndarray, end_full: np.ndarray, steps: int = 30) -> np.ndarray:
+    """Linear interpolation (arm only, base fixed)."""
+    t = np.linspace(0, 1, steps)
+    path = np.empty((steps, 11))
+    for i in range(steps):
+        path[i] = start_full + t[i] * (end_full - start_full)
+        path[i, :3] = start_full[:3]
+    return path
+
+
 def pick(
-    ik: IKBundle,
     current_full: np.ndarray,
-    object_xyz: np.ndarray,
+    pregrasp_arm: np.ndarray,
+    grasp_arm: np.ndarray,
     pointcloud: np.ndarray,
     label: str,
 ) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray]:
-    """Plan current -> pregrasp -> grasp (line) -> pregrasp (line)."""
-    base_yaw = float(current_full[2])
-    grasp_pose, pregrasp_pose, grasp_pos, pregrasp_pos = build_grasp_pose(
-        object_xyz, base_yaw
-    )
-
-    pregrasp_full = solve_world_arm_goal(ik, current_full, pregrasp_pose)
-    grasp_full = solve_world_arm_goal(ik, pregrasp_full, grasp_pose)
+    """Plan current -> pregrasp (free) -> grasp (linear) -> lift (linear)."""
+    base = current_full[:3]
+    pregrasp_full = _make_full(base, pregrasp_arm)
+    grasp_full = _make_full(base, grasp_arm)
 
     free_path = plan_arm_free(
         current_full, pregrasp_full, pointcloud, f"{label} free->pregrasp"
     )
-    approach_path = plan_arm_line(
-        pregrasp_full, grasp_full, pregrasp_pos, grasp_pos, pointcloud,
-        f"{label} approach",
-    )
-    lift_path = plan_arm_line(
-        grasp_full, pregrasp_full, grasp_pos, pregrasp_pos, pointcloud,
-        f"{label} lift",
-    )
+    approach_path = _linear_arm_path(pregrasp_full, grasp_full, steps=30)
+    lift_path = _linear_arm_path(grasp_full, pregrasp_full, steps=30)
 
     return [free_path, approach_path], [lift_path], pregrasp_full
 
 
 def place(
-    ik: IKBundle,
     current_full: np.ndarray,
-    object_xyz: np.ndarray,
+    preplace_arm: np.ndarray,
+    place_arm: np.ndarray,
     pointcloud: np.ndarray,
     label: str,
 ) -> tuple[list[np.ndarray], list[np.ndarray], np.ndarray]:
-    """Plan current -> pre-place (free) -> place (line) -> pre-place (line)."""
-    base_yaw = float(current_full[2])
-    place_pose, pre_place_pose, place_pos, pre_place_pos = build_grasp_pose(
-        object_xyz, base_yaw
-    )
-
-    pre_place_full = solve_world_arm_goal(ik, current_full, pre_place_pose)
-    place_full = solve_world_arm_goal(ik, pre_place_full, place_pose)
+    """Plan current -> pre-place (free) -> place (linear) -> retreat (linear)."""
+    base = current_full[:3]
+    pre_place_full = _make_full(base, preplace_arm)
+    place_full = _make_full(base, place_arm)
 
     carry_free = plan_arm_free(
         current_full, pre_place_full, pointcloud, f"{label} free->preplace"
     )
-    lower = plan_arm_line(
-        pre_place_full, place_full, pre_place_pos, place_pos, pointcloud,
-        f"{label} lower",
-    )
-    retreat = plan_arm_line(
-        place_full, pre_place_full, place_pos, pre_place_pos, pointcloud,
-        f"{label} retreat",
-    )
+    lower = _linear_arm_path(pre_place_full, place_full, steps=30)
+    retreat = _linear_arm_path(place_full, pre_place_full, steps=30)
 
     return [carry_free, lower], [retreat], pre_place_full
 
@@ -455,7 +300,7 @@ def navigate(
     pointcloud: np.ndarray,
     label: str,
 ) -> np.ndarray:
-    """BiT\* base nav; returns the (N, 11) full-DOF path."""
+    """BIT* base nav; returns the (N, 11) full-DOF path."""
     return plan_base(current_full, base_goal, pointcloud, label)
 
 
@@ -616,15 +461,16 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     bottle_id = place_graspable(env, "bottle", BOTTLE_ON_SOFA)
 
     gripper_link = find_link_index(env, GRIPPER_LINK)
-    ik = build_ik_bundle()
 
     segments: list[Segment] = []
     client = env.sim.client
+    ik_cfg = IK_CONFIGS  # pre-computed arm configs
 
     # ── Stage 1: pick apple off the table ────────────────────────────
     print("\n── stage 1: pick apple off the table ──")
     pick_free, pick_lift, end_full = pick(
-        ik, current_full, APPLE_ON_TABLE, cloud, "pick apple"
+        current_full, ik_cfg["apple_pick_pregrasp"], ik_cfg["apple_pick_grasp"],
+        cloud, "pick apple",
     )
     for p in pick_free:
         segments.append(
@@ -649,7 +495,8 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     # ── Stage 2: place apple on the table ────────────────────────────
     print("\n── stage 2: place apple on the table ──")
     place_carry, place_retreat, end_full = place(
-        ik, current_full, APPLE_PLACE_ON_TABLE, cloud, "place apple"
+        current_full, ik_cfg["apple_place_pregrasp"], ik_cfg["apple_place_grasp"],
+        cloud, "place apple",
     )
     for p in place_carry:
         segments.append(
@@ -678,7 +525,8 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     # ── Stage 4: pick bottle off the sofa ────────────────────────────
     print("\n── stage 4: pick bottle off the sofa ──")
     pick_free, pick_lift, end_full = pick(
-        ik, current_full, BOTTLE_ON_SOFA, cloud, "pick bottle"
+        current_full, ik_cfg["bottle_pick_pregrasp"], ik_cfg["bottle_pick_grasp"],
+        cloud, "pick bottle",
     )
     for p in pick_free:
         segments.append(
@@ -714,7 +562,8 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     # ── Stage 6: place bottle beside the apple ──────────────────────
     print("\n── stage 6: place bottle beside the apple ──")
     place_carry, place_retreat, end_full = place(
-        ik, current_full, BOTTLE_PLACE_ON_TABLE, cloud, "place bottle"
+        current_full, ik_cfg["bottle_place_pregrasp"], ik_cfg["bottle_place_grasp"],
+        cloud, "place bottle",
     )
     for p in place_carry:
         segments.append(

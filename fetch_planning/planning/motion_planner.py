@@ -66,6 +66,7 @@ class MotionPlanner:
     ) -> None:
         from fetch_planning._ompl_vamp import OmplVampPlanner
         from fetch_planning.config.robot_config import (
+            BASE_REVERSE_PENALTY,
             BASE_TURNING_RADIUS,
             HOME_JOINTS,
             JOINT_GROUPS,
@@ -128,6 +129,7 @@ class MotionPlanner:
             self._base_config.tolist(),
             base_dim,
             BASE_TURNING_RADIUS,
+            BASE_REVERSE_PENALTY,
         )
         self._joint_names = list(sg_joint_names)
         if set(active_indices) == set(range(len(full_names))):
