@@ -52,7 +52,7 @@ class MotionPlanner:
 
     For subgroup planners the helper methods :meth:`extract_config`,
     :meth:`embed_config`, and :meth:`embed_path` convert between the
-    reduced DOF space used by the planner and the full 24-DOF body
+    reduced DOF space used by the planner and the full 11-DOF body
     configuration.
     """
 
@@ -159,7 +159,7 @@ class MotionPlanner:
 
     @property
     def subgroup_indices(self) -> np.ndarray | None:
-        """Indices of this planner's joints in the full 24-DOF config."""
+        """Indices of this planner's joints in the full 11-DOF config."""
         return self._subgroup_indices
 
     @property

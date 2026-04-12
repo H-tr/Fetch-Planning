@@ -1,11 +1,11 @@
-"""Vertical-line constraint: the left gripper moves straight up and down.
+"""Vertical-line constraint: the gripper moves straight up and down.
 
 Stacked residual — the gripper's ``x`` and ``y`` translation
 components are pinned to their home values, and the first two
 columns of its rotation matrix are pinned as well.  Translation
 in ``z`` is the only free end-effector DOF; rotation is locked
 so the gripper appears to slide cleanly along the vertical rail
-instead of tumbling.  The residual has rank 5 on the 7-DOF left
+instead of tumbling.  The residual has rank 5 on the 7-DOF
 arm, leaving a 2-D null space for the planner to exploit.
 
 A bold yellow cylinder marks the rail.
@@ -34,14 +34,14 @@ def main(time_limit: float = 5.0):
     p0 = ee_position(ctx, start)
     R0 = ctx.evaluate_link_pose(EE_LINK, start)[:3, :3]
     tcp = ee_translation(ctx)
-    left_rot = ctx.link_rotation(EE_LINK)
+    ee_rot = ctx.link_rotation(EE_LINK)
 
     # The manifold: TCP's x and y pinned, rotation locked; z is free.
     residual: ca.SX = ca.vertcat(  # type: ignore[assignment]
         tcp[0] - float(p0[0]),
         tcp[1] - float(p0[1]),
-        left_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
-        left_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
+        ee_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
+        ee_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
     )
     line = Constraint(residual=residual, q_sym=ctx.q, name="line_v")
 

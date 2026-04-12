@@ -47,7 +47,7 @@ sys.path.insert(0, str(_REPO_ROOT / "examples"))
 from fetch_planning.config.robot_config import (  # noqa: E402
     HOME_JOINTS,
     JOINT_GROUPS,
-    autolife_robot_config,
+    fetch_robot_config,
 )
 from fetch_planning.envs.pybullet_env import PyBulletEnv  # noqa: E402
 from fetch_planning.kinematics import create_ik_solver  # noqa: E402
@@ -69,15 +69,15 @@ from fetch_planning.utils.video_recorder import (  # noqa: E402
 )
 
 ASSETS_DIR = _REPO_ROOT / "docs" / "assets"
-SUBGROUP = "autolife_left_arm"
-# Rotation-reference link for the constraint residuals (Link_Left_Gripper
+SUBGROUP = "fetch_arm"
+# Rotation-reference link for the constraint residuals (gripper_link
 # is the rigid gripper body frame).  For translation constraints we use
 # the symmetric midpoint between the two finger links — see
 # ``ee_translation`` / ``ee_position`` in examples/constrained_planning/_shared.py
 # for the rationale.
-EE_LINK = "Link_Left_Gripper"
-LEFT_FINGER_LINK = "Link_Left_Gripper_Left_Finger"
-RIGHT_FINGER_LINK = "Link_Left_Gripper_Right_Finger"
+EE_LINK = "gripper_link"
+LEFT_FINGER_LINK = "l_gripper_finger_link"
+RIGHT_FINGER_LINK = "r_gripper_finger_link"
 
 
 def _ee_tcp_sym(ctx):
@@ -110,18 +110,18 @@ def _ee_tcp_world(env) -> np.ndarray:
 
 def _make_env() -> PyBulletEnv:
     """Fresh headless env per clip — keeps state clean."""
-    return PyBulletEnv(autolife_robot_config, visualize=False)
+    return PyBulletEnv(fetch_robot_config, visualize=False)
 
 
 def _full_dof(arm_cfg: np.ndarray, group: str = "left_arm") -> np.ndarray:
-    """Embed an arm-only joint vector into the full 24-DOF layout."""
+    """Embed an arm-only joint vector into the full 11-DOF layout."""
     full = HOME_JOINTS.copy()
     full[JOINT_GROUPS[group]] = arm_cfg
     return full
 
 
 def _stack_full_dof(arm_path: np.ndarray, group: str = "left_arm") -> np.ndarray:
-    """Broadcast an arm-only path to a 24-DOF path."""
+    """Broadcast an arm-only path to a 11-DOF path."""
     full = np.tile(HOME_JOINTS, (len(arm_path), 1))
     full[:, JOINT_GROUPS[group]] = arm_path
     return full
@@ -199,47 +199,26 @@ def record_trac_ik(out: Path) -> None:
     # FK, and use that as the target frame the video will draw.
     chain_specs = [
         (
-            "left_arm",
-            "Link_Left_Gripper",
-            np.arange(7, 14),  # slots 7..13
-            HOME_JOINTS[G["left_arm"]],
+            "arm",
+            "gripper_link",
+            np.arange(4, 11),  # arm slots 4..10 in full 11-DOF
+            HOME_JOINTS[G["arm"]],
             [
                 np.array([0.22, 0.15, 0.05]),
                 np.array([0.15, 0.25, 0.05]),
             ],
         ),
         (
-            "right_arm",
-            "Link_Right_Gripper",
-            np.arange(17, 24),  # slots 17..23
-            HOME_JOINTS[G["right_arm"]],
-            [np.array([0.22, -0.15, 0.05])],
-        ),
-        (
-            "whole_body_left",
-            "Link_Left_Gripper",
-            np.arange(3, 14),  # legs + waist + left_arm = slots 3..13
+            "arm_with_torso",
+            "gripper_link",
+            np.arange(3, 11),  # torso + arm = slots 3..10
             np.concatenate(
                 [
-                    HOME_JOINTS[G["legs"]],
-                    HOME_JOINTS[G["waist"]],
-                    HOME_JOINTS[G["left_arm"]],
+                    HOME_JOINTS[G["torso"]],
+                    HOME_JOINTS[G["arm"]],
                 ]
             ),
             [np.array([0.30, 0.10, 0.05])],
-        ),
-        (
-            "whole_body_right",
-            "Link_Right_Gripper",
-            np.r_[np.arange(3, 7), np.arange(17, 24)],  # legs + waist + right_arm
-            np.concatenate(
-                [
-                    HOME_JOINTS[G["legs"]],
-                    HOME_JOINTS[G["waist"]],
-                    HOME_JOINTS[G["right_arm"]],
-                ]
-            ),
-            [np.array([0.30, -0.10, 0.05])],
         ),
     ]
 
@@ -297,53 +276,34 @@ def record_pink_ik(out: Path) -> None:
     config = PinkIKConfig(
         lm_damping=1e-3,
         com_cost=0.1,
-        camera_frame="Link_Waist_Yaw_to_Shoulder_Inner",
+        camera_frame="head_pan_link",
         camera_cost=0.1,
         max_iterations=200,
     )
 
-    # Pink's `whole_body` chain covers legs + waist + one arm (11 DOF).
-    # We sweep both sides to show the constrained solver handling the
-    # left and right whole-body chains with the same config.
-    side_specs = [
+    # Pink's `arm_with_torso` chain covers torso + arm (8 DOF).
+    chain_specs = [
         (
-            "left",
-            "Link_Left_Gripper",
-            np.r_[G["legs"], G["waist"], G["left_arm"]],
+            "gripper_link",
+            np.arange(3, 11),  # torso + arm = slots 3..10
             np.concatenate(
                 [
-                    HOME_JOINTS[G["legs"]],
-                    HOME_JOINTS[G["waist"]],
-                    HOME_JOINTS[G["left_arm"]],
+                    HOME_JOINTS[G["torso"]],
+                    HOME_JOINTS[G["arm"]],
                 ]
             ),
             [
                 np.array([0.30, 0.00, 0.00]),
                 np.array([0.20, 0.20, 0.00]),
-            ],
-        ),
-        (
-            "right",
-            "Link_Right_Gripper",
-            np.r_[G["legs"], G["waist"], G["right_arm"]],
-            np.concatenate(
-                [
-                    HOME_JOINTS[G["legs"]],
-                    HOME_JOINTS[G["waist"]],
-                    HOME_JOINTS[G["right_arm"]],
-                ]
-            ),
-            [
-                np.array([0.30, 0.00, 0.00]),
                 np.array([0.20, -0.20, 0.00]),
             ],
         ),
     ]
 
     solved: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]] = []
-    for side, ee_link, chain_cols, seed, offsets in side_specs:
+    for ee_link, chain_cols, seed, offsets in chain_specs:
         solver = create_ik_solver(
-            "whole_body", side=side, backend="pink", config=config
+            "arm_with_torso", backend="pink", config=config
         )
         home_pose = solver.fk(seed)
         for off in offsets:
@@ -445,14 +405,14 @@ def record_subgroup_planning(out: Path) -> None:
     def base_with_stance(stance: dict[str, float]) -> np.ndarray:
         base = HOME_JOINTS.copy()
         for name, val in stance.items():
-            base[autolife_robot_config.joint_names.index(name)] = val
+            base[fetch_robot_config.joint_names.index(name)] = val
         return base
 
     # A curated set that reads well in a short clip: one per stance.
     combos = [
-        ("autolife_left_arm", "high"),
-        ("autolife_torso_left_arm", "mid"),
-        ("autolife_dual_arm", "low"),
+        ("fetch_arm", "high"),
+        ("fetch_arm_with_torso", "mid"),
+        ("fetch_arm_with_torso", "low"),
     ]
 
     paths: list[np.ndarray] = []

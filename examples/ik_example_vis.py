@@ -15,40 +15,27 @@ from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.types import IKConfig, SE3Pose, SolveType
 
-# Home configuration subsets matching each chain's joint ordering (via JOINT_GROUPS)
+# Home configuration subsets matching each chain's joint ordering
 G = JOINT_GROUPS
-HOME_LEFT_ARM = HOME_JOINTS[G["left_arm"]]
-HOME_RIGHT_ARM = HOME_JOINTS[G["right_arm"]]
-HOME_WHOLE_BODY_LEFT = np.concatenate(
+HOME_ARM = HOME_JOINTS[G["arm"]]
+HOME_ARM_WITH_TORSO = np.concatenate(
     [
-        HOME_JOINTS[G["legs"]],
-        HOME_JOINTS[G["waist"]],
-        HOME_JOINTS[G["left_arm"]],
-    ]
-)
-HOME_WHOLE_BODY_RIGHT = np.concatenate(
-    [
-        HOME_JOINTS[G["legs"]],
-        HOME_JOINTS[G["waist"]],
-        HOME_JOINTS[G["right_arm"]],
+        HOME_JOINTS[G["torso"]],
+        HOME_JOINTS[G["arm"]],
     ]
 )
 
-# Mapping from chain solution indices to full 21-joint config indices (no base)
-# These indices are relative to HOME_JOINTS[3:] (the 21 body joints)
-# Order: legs[0:2], waist[2:4], left_arm[4:11], neck[11:14], right_arm[14:21]
+# Mapping from chain solution indices to body joint indices.
+# Body joints = HOME_JOINTS[3:] (torso + 7-arm = 8 joints).
+# Index 0 = torso_lift_joint, indices 1..7 = arm joints.
 CHAIN_TO_BODY = {
-    "left_arm": list(range(4, 11)),
-    "right_arm": list(range(14, 21)),
-    "whole_body_left": list(range(0, 11)),
-    "whole_body_right": list(range(0, 4)) + list(range(14, 21)),
+    "arm": list(range(1, 8)),  # 7 arm joints → body[1:8]
+    "arm_with_torso": list(range(0, 8)),  # torso + arm → body[0:8]
 }
 
 CHAIN_SEEDS = {
-    "left_arm": HOME_LEFT_ARM,
-    "right_arm": HOME_RIGHT_ARM,
-    "whole_body_left": HOME_WHOLE_BODY_LEFT,
-    "whole_body_right": HOME_WHOLE_BODY_RIGHT,
+    "arm": HOME_ARM,
+    "arm_with_torso": HOME_ARM_WITH_TORSO,
 }
 
 
@@ -114,16 +101,6 @@ def test_chain(env, chain_name):
     print(f"Chain: {chain_name}")
     print(f"{'='*60}")
 
-    # IKConfig controls solver behavior:
-    #   timeout         - seconds for TRAC-IK dual-thread solve (default: 0.2)
-    #   epsilon         - convergence tolerance (default: 1e-5)
-    #   solve_type      - SPEED:    return first valid solution (fastest)
-    #                     DISTANCE: minimize joint displacement from seed
-    #                     MANIP1:   maximize manipulability (product of singular values)
-    #                     MANIP2:   maximize isotropy (min/max singular value ratio)
-    #   max_attempts    - random restart attempts (default: 10)
-    #   position_tolerance    - post-solve validation in meters (default: 1e-4)
-    #   orientation_tolerance - post-solve validation in radians (default: 1e-4)
     config = IKConfig(
         timeout=0.2,
         epsilon=1e-5,
@@ -131,9 +108,6 @@ def test_chain(env, chain_name):
         max_attempts=10,
     )
 
-    # Available chains: left_arm, right_arm, whole_body_left, whole_body_right,
-    #                   whole_body_base_left, whole_body_base_right
-    # Shorthand: create_ik_solver("whole_body", side="left")
     solver = create_ik_solver(chain_name, config=config)
     seed = CHAIN_SEEDS[chain_name]
     ee_link = CHAIN_CONFIGS[chain_name].ee_link
@@ -147,11 +121,11 @@ def test_chain(env, chain_name):
     env.set_joint_states(HOME_JOINTS[3:])
     debug_lines = draw_frame_at_link(env, ee_idx, length=0.06, width=2)
 
-    # FK to get current EE pose (in chain-local frame for IK target)
+    # FK to get current EE pose
     current_pose = solver.fk(seed)
 
     # Define target pose
-    if "whole_body" in chain_name:
+    if "torso" in chain_name or "whole" in chain_name:
         offset = np.array([0.10, 0.08, 0.05])
         angle = np.deg2rad(20)
         rot_z = np.array(
@@ -174,8 +148,7 @@ def test_chain(env, chain_name):
 
     wait_key(env, ord("n"), f"[{chain_name}] Home config. Press 'n' to solve IK.")
 
-    # Solve IK (seed is optional; if None, uses random within joint limits)
-    # Joint limits can be overridden: solver.set_joint_limits(lower, upper)
+    # Solve IK
     result = solver.solve(target_pose, seed=seed)
     print(
         f"  IK: {result.status.value}, "
@@ -184,7 +157,7 @@ def test_chain(env, chain_name):
     )
 
     if result.joint_positions is not None:
-        # Apply solution: overlay IK result onto home body joints
+        # Apply solution: overlay IK result onto body joints
         body_joints = HOME_JOINTS[3:].copy()
         for i, bi in enumerate(CHAIN_TO_BODY[chain_name]):
             body_joints[bi] = float(result.joint_positions[i])
@@ -204,7 +177,7 @@ def main():
 
     env = PyBulletEnv(fetch_robot_config, visualize=True)
 
-    for chain_name in ["left_arm", "right_arm", "whole_body_left", "whole_body_right"]:
+    for chain_name in ["arm", "arm_with_torso"]:
         try:
             test_chain(env, chain_name)
         except Exception as e:

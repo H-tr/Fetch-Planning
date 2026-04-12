@@ -1,8 +1,8 @@
 """TRAC-IK stress test with PyBullet visualization.
 
 Same target poses as constrained_ik_example_vis.py but using the
-unconstrained TRAC-IK backend — no CoM stability, no camera
-stabilization, no collision avoidance.
+unconstrained TRAC-IK backend — no CoM stability, no collision
+avoidance.
 
 Controls:
     n — advance to next target
@@ -31,12 +31,12 @@ from fetch_planning.types import IKConfig, SE3Pose, SolveType
 G = JOINT_GROUPS
 SEED = np.concatenate(
     [
-        HOME_JOINTS[G["legs"]],
-        HOME_JOINTS[G["waist"]],
-        HOME_JOINTS[G["left_arm"]],
+        HOME_JOINTS[G["torso"]],
+        HOME_JOINTS[G["arm"]],
     ]
 )
-CHAIN_TO_BODY = list(range(0, 11))
+# arm_with_torso chain: torso(1) + arm(7) = 8 DOF → body[0:8]
+CHAIN_TO_BODY = list(range(0, 8))
 
 
 def get_ee_link_index(env, link_name):
@@ -129,11 +129,11 @@ def main():
     print("=" * 60)
 
     env = PyBulletEnv(fetch_robot_config, visualize=True)
-    ee_link = CHAIN_CONFIGS["whole_body_left"].ee_link
+    ee_link = CHAIN_CONFIGS["arm_with_torso"].ee_link
     ee_idx = get_ee_link_index(env, ee_link)
 
     config = IKConfig(solve_type=SolveType.DISTANCE, max_attempts=20)
-    solver = create_ik_solver("whole_body", side="left", config=config)
+    solver = create_ik_solver("arm_with_torso", config=config)
 
     home_pose = solver.fk(SEED)
     targets = build_targets(home_pose)

@@ -29,11 +29,10 @@ from fetch_planning.kinematics.pink_ik_solver import PinkIKSolver
 from fetch_planning.types import PinkIKConfig, SE3Pose
 
 G = JOINT_GROUPS
-HOME_WHOLE_BODY_LEFT = np.concatenate(
+HOME_ARM_WITH_TORSO = np.concatenate(
     [
-        HOME_JOINTS[G["legs"]],
-        HOME_JOINTS[G["waist"]],
-        HOME_JOINTS[G["left_arm"]],
+        HOME_JOINTS[G["torso"]],
+        HOME_JOINTS[G["arm"]],
     ]
 )
 
@@ -44,20 +43,20 @@ def basic_ik():
     print("1. Basic Pink IK (singularity-robust)")
     print("=" * 60)
 
-    solver = create_ik_solver("whole_body", side="left", backend="pink")
+    solver = create_ik_solver("arm_with_torso", backend="pink")
     print(
         f"Chain: {solver.base_frame} -> {solver.ee_frame} "
         f"({solver.num_joints} joints)"
     )
 
-    home_pose = solver.fk(HOME_WHOLE_BODY_LEFT)
+    home_pose = solver.fk(HOME_ARM_WITH_TORSO)
     target = SE3Pose(
         position=home_pose.position + np.array([0.05, 0.0, -0.05]),
         rotation=home_pose.rotation,
     )
 
     # solve() returns IKResult — same interface as TracIKSolver
-    result = solver.solve(target, seed=HOME_WHOLE_BODY_LEFT)
+    result = solver.solve(target, seed=HOME_ARM_WITH_TORSO)
     print(f"Status: {result.status.value}")
     print(f"  position error:    {result.position_error:.6f} m")
     print(f"  orientation error: {result.orientation_error:.6f} rad")
@@ -66,36 +65,33 @@ def basic_ik():
     print()
 
 
-def com_and_camera_stability():
-    """2. CoM + camera stability — keeps robot stable and chest camera steady."""
+def com_stability():
+    """2. CoM stability — keeps the robot stable during arm motion."""
     print("=" * 60)
-    print("2. CoM + camera stability")
+    print("2. CoM stability")
     print("=" * 60)
 
     config = PinkIKConfig(
         lm_damping=1e-3,
         com_cost=0.1,  # keep CoM above support base
-        camera_frame="Link_Waist_Yaw_to_Shoulder_Inner",  # chest camera
-        camera_cost=0.1,  # penalize torso rotation to keep camera stable
         max_iterations=200,
     )
 
     solver = create_ik_solver(
-        "whole_body",
-        side="left",
+        "arm_with_torso",
         backend="pink",
         config=config,
     )
     assert isinstance(solver, PinkIKSolver)
 
-    home_pose = solver.fk(HOME_WHOLE_BODY_LEFT)
+    home_pose = solver.fk(HOME_ARM_WITH_TORSO)
     target = SE3Pose(
         position=home_pose.position + np.array([0.08, 0.05, -0.08]),
         rotation=home_pose.rotation,
     )
 
     # solve_constrained() gives the full trajectory
-    result = solver.solve_constrained(target, seed=HOME_WHOLE_BODY_LEFT)
+    result = solver.solve_constrained(target, seed=HOME_ARM_WITH_TORSO)
     print(f"Status: {result.status.value}  ({result.iterations} iterations)")
     print(f"  position error:    {result.position_error:.6f} m")
     print(f"  orientation error: {result.orientation_error:.6f} rad")
@@ -113,13 +109,11 @@ def collision_avoidance():
     print("3. Collision avoidance (self + obstacles)")
     print("=" * 60)
 
-    # Use simplified collision geometry (35 geoms, 57 pairs) instead of the
-    # full-mesh URDF (452 pairs).  Same kinematic model, much lighter QP.
-    urdf_path = CHAIN_CONFIGS["whole_body_left"].urdf_path
+    # Build collision model from the Fetch URDF
+    urdf_path = CHAIN_CONFIGS["arm_with_torso"].urdf_path
     urdf_dir = os.path.dirname(urdf_path)
-    collision_urdf = os.path.join(urdf_dir, "autolife_simple.urdf")
-    srdf_path = os.path.join(urdf_dir, "autolife.srdf")
-    collision_ctx = build_collision_model(collision_urdf, srdf_path=srdf_path)
+    srdf_path = os.path.join(urdf_dir, "fetch.srdf")
+    collision_ctx = build_collision_model(urdf_path, srdf_path=srdf_path)
     print(f"Self-collision pairs: {len(collision_ctx.collision_model.collisionPairs)}")
 
     # Obstacle cluster placed away from the home configuration
@@ -148,21 +142,20 @@ def collision_avoidance():
 
     # Create solver and attach the collision context
     solver = create_ik_solver(
-        "whole_body",
-        side="left",
+        "arm_with_torso",
         backend="pink",
         config=config,
     )
     assert isinstance(solver, PinkIKSolver)
     solver.set_collision_context(collision_ctx)
 
-    home_pose = solver.fk(HOME_WHOLE_BODY_LEFT)
+    home_pose = solver.fk(HOME_ARM_WITH_TORSO)
     target = SE3Pose(
         position=home_pose.position + np.array([0.05, 0.0, -0.05]),
         rotation=home_pose.rotation,
     )
 
-    result = solver.solve_constrained(target, seed=HOME_WHOLE_BODY_LEFT)
+    result = solver.solve_constrained(target, seed=HOME_ARM_WITH_TORSO)
     print(f"Status: {result.status.value}  ({result.iterations} iterations)")
     print(f"  position error:    {result.position_error:.6f} m")
     print(f"  orientation error: {result.orientation_error:.6f} rad")
@@ -174,7 +167,7 @@ def collision_avoidance():
 
 def main():
     basic_ik()
-    com_and_camera_stability()
+    com_stability()
     collision_avoidance()
 
 

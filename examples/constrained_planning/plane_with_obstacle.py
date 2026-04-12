@@ -1,6 +1,6 @@
 """Plane constraint + sphere obstacle: arm bends around, gripper stays flat.
 
-Same plane manifold as ``plane.py`` (left gripper z pinned to its
+Same plane manifold as ``plane.py`` (gripper z pinned to its
 home value), but with a solid red sphere planted squarely in the
 gripper's swept arc.  The planner has to curve the arm around the
 obstacle while the gripper keeps sliding across the plane — the

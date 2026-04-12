@@ -1,7 +1,7 @@
 """Motion planning around a table: plan a collision-free arm path.
 
 Loads the bundled ``table.ply`` point cloud, places it in front of
-the robot, and asks a 7-DOF left-arm planner to weave a path from
+the robot, and asks the 7-DOF arm planner to weave a path from
 HOME to a randomly sampled collision-free goal.  The C++ collision
 checker sees every point as a small sphere (``point_radius``), so
 the planner has to curve the arm around the table to reach the
@@ -57,7 +57,7 @@ def main(
     env.add_pointcloud(cloud, pointsize=3)
 
     planner = create_planner(
-        "autolife_left_arm",
+        "fetch_arm",
         config=PlannerConfig(
             planner_name=planner_name,
             time_limit=time_limit,
@@ -73,7 +73,7 @@ def main(
     result = planner.plan(start, goal)
     n = result.path.shape[0] if result.path is not None else 0
     print(
-        f"── motion planning: left arm around a table ──\n"
+        f"── motion planning: arm around a table ──\n"
         f"  planner={planner_name}  cloud={len(cloud)} pts  "
         f"radius={point_radius}\n"
         f"  {result.status.value}: {n} waypoints in "

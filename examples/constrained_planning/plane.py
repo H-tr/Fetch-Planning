@@ -1,7 +1,7 @@
-"""Plane constraint: the left gripper slides across a horizontal surface.
+"""Plane constraint: the gripper slides across a horizontal surface.
 
 A single holonomic equation written as a CasADi expression — the
-left gripper's world z-coordinate must equal its home value.  OMPL's
+gripper's world z-coordinate must equal its home value.  OMPL's
 ``ProjectedStateSpace`` projects every sampled state onto the plane
 before validation, so the gripper trajectory is guaranteed flat
 from start to goal.

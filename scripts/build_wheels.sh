@@ -5,7 +5,7 @@
 # Produces wheels in dist/wheels/ compatible with glibc 2.28+
 # (Ubuntu 20.04+, RHEL 8+, Debian 11+, etc.)
 #
-# Builds autolife-vamp version-specific wheels for Python 3.10, 3.11, 3.12.
+# Builds fetch-vamp version-specific wheels for Python 3.10, 3.11, 3.12.
 
 set -euo pipefail
 
@@ -51,13 +51,13 @@ docker run --rm \
     rm -rf build/
 
     # ------------------------------------------------------------------
-    # Step 3: Build autolife-vamp version-specific wheels
+    # Step 3: Build fetch-vamp version-specific wheels
     # ------------------------------------------------------------------
     PYTHON_VERSIONS="cp312-cp312 cp311-cp311 cp310-cp310"
 
     for PYVER in $PYTHON_VERSIONS; do
       echo ""
-      echo "==> Building autolife-vamp wheel for $PYVER..."
+      echo "==> Building fetch-vamp wheel for $PYVER..."
       export PATH=/opt/python/$PYVER/bin:$PATH
       pip install build scikit-build-core nanobind numpy cmake ninja -q
       SKBUILD_WHEEL_PY_API="" python -m build third_party/vamp --wheel --outdir /tmp/raw-wheels/
@@ -68,8 +68,8 @@ docker run --rm \
     # Step 4: Repair wheels — bundle .so and tag as manylinux_2_28
     # ------------------------------------------------------------------
     echo ""
-    echo "==> Repairing autolife-vamp wheels..."
-    for whl in /tmp/raw-wheels/autolife_vamp-*.whl; do
+    echo "==> Repairing fetch-vamp wheels..."
+    for whl in /tmp/raw-wheels/fetch_vamp-*.whl; do
       echo ""
       echo "    --- $(basename $whl) ---"
       auditwheel show "$whl" || true
@@ -82,11 +82,11 @@ docker run --rm \
     done
 
     # ------------------------------------------------------------------
-    # Step 5: Build autolife-planning wheel
+    # Step 5: Build fetch-planning wheel
     # (No KDL in this container → pytracik is skipped → pure Python wheel)
     # ------------------------------------------------------------------
     echo ""
-    echo "==> Building autolife-planning wheel..."
+    echo "==> Building fetch-planning wheel..."
     export PATH=/opt/python/cp312-cp312/bin:$PATH
     pip install pybind11 setuptools -q
     python -m build --wheel --outdir /output/

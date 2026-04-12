@@ -136,7 +136,7 @@ class PyBulletEnv(BaseEnv):
         )
 
     def set_configuration(self, config: np.ndarray):
-        """Apply a full 24-DOF config (3 base + 21 joints) to the visualization."""
+        """Apply a full 11-DOF config (3 base + 8 joints) to the visualization."""
         self.set_base_position(config[0], config[1], config[2])
         self.set_joint_states(config[3:])
 

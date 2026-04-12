@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "=== Autolife-Planning Setup ==="
+echo "=== Fetch-Planning Setup ==="
 
 # 1. Check / install pixi
 if ! command -v pixi &>/dev/null; then
@@ -31,4 +31,4 @@ pixi run foam-build
 
 echo ""
 echo "=== Setup complete ==="
-echo "Run examples with:  pixi run python examples/random_dance_around_table.py"
+echo "Run examples with:  pixi run python examples/motion_planning_example.py"

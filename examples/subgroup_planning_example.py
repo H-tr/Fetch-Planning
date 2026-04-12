@@ -1,9 +1,11 @@
-"""Plan every kinematic subgroup at three different stances.
+"""Plan every kinematic subgroup at different torso heights.
 
-Demonstrates that the same subgroup name (e.g. ``autolife_left_arm``)
-can be planned around any 24-DOF base configuration the caller passes
-in — no stance is baked into the planner name.  The three stances
-below are *example data*, not part of the planning API.
+Demonstrates that the same subgroup name (e.g. ``fetch_arm``) can
+be planned around any 11-DOF base configuration the caller passes
+in — no stance is baked into the planner name.  The stances below
+vary only ``torso_lift_joint``; replace them with any 11-DOF array
+(e.g. the live state from your env) to plan around an arbitrary
+pose.
 
     pixi run python examples/subgroup_planning_example.py
 """
@@ -16,24 +18,20 @@ from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
 
-# Joint values for three example stances.  Replace this dict with any
-# 24-DOF array (e.g. the live state from your env) to plan around an
-# arbitrary pose.
+# Joint values for three example stances.  Only the torso height
+# varies; base is at the origin, arm is at HOME.
 STANCES = {
-    "high": {"Joint_Ankle": 0.0, "Joint_Knee": 0.0, "Joint_Waist_Pitch": 0.00},
-    "mid": {"Joint_Ankle": 0.78, "Joint_Knee": 1.60, "Joint_Waist_Pitch": 0.89},
-    "low": {"Joint_Ankle": 1.41, "Joint_Knee": 2.38, "Joint_Waist_Pitch": 0.95},
+    "low": {"torso_lift_joint": 0.0},
+    "mid": {"torso_lift_joint": 0.20},
+    "high": {"torso_lift_joint": 0.35},
 }
 
 SUBGROUPS = [
-    "autolife_left_arm",
-    "autolife_right_arm",
-    "autolife_dual_arm",
-    "autolife_torso_left_arm",
-    "autolife_torso_right_arm",
-    "autolife_height",  # 3 DOF: ankle + knee + waist pitch
-    "autolife_base",  # 3 DOF: virtual x, y, yaw
-    "autolife_body",  # 21 DOF: legs + waist + arms + neck
+    "fetch_arm",  # 7 DOF: shoulder_pan → wrist_roll
+    "fetch_arm_with_torso",  # 8 DOF: torso + arm
+    "fetch_base",  # 3 DOF: nonholonomic mobile base
+    "fetch_base_arm",  # 10 DOF: base + arm (torso fixed)
+    "fetch_whole_body",  # 11 DOF: base + torso + arm
 ]
 
 
@@ -93,7 +91,7 @@ def main(planner_name: str = "bitstar", time_limit: float = 0.5):
     env = PyBulletEnv(fetch_robot_config, visualize=True)
     config = PlannerConfig(planner_name=planner_name, time_limit=time_limit)
 
-    # Every subgroup × every stance.  Inactive joints are pinned to the
+    # Every subgroup x every stance.  Inactive joints are pinned to the
     # stance values; active joints get the stance as their start pose.
     for stance_name, stance in STANCES.items():
         base = base_with_stance(stance)

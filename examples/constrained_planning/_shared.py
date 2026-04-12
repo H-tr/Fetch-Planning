@@ -1,6 +1,6 @@
 """Shared scaffolding for the constrained-planning gallery.
 
-Every demo in this folder boots the same PyBullet env and left-arm
+Every demo in this folder boots the same PyBullet env and arm
 SymbolicContext, searches for a random manifold-feasible goal via
 seed-and-project, and then plans + animates.  Those three pieces
 are factored out here so each demo script can focus on the one
@@ -20,20 +20,14 @@ from fetch_planning.config.robot_config import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.planning import SymbolicContext
 
-SUBGROUP = "autolife_left_arm"
-# Rotation-reference link: Link_Left_Gripper is the rigid gripper
-# body frame, which is what the constraint residuals use for
-# orientation locks.  For translation constraints we use the TCP —
-# the symmetric midpoint between the two finger link origins — via
-# :func:`ee_translation` / :func:`ee_position` below.  That lands
-# visually at the grasping point between the fingers, which is a
-# more intuitive "this is where the constraint lives" marker than
-# either the wrist-gripper joint (inside the mesh) or
-# ``Link_Left_Gripper``'s own origin (asymmetric, chosen by the
-# SolidWorks exporter).
-EE_LINK = "Link_Left_Gripper"
-LEFT_FINGER_LINK = "Link_Left_Gripper_Left_Finger"
-RIGHT_FINGER_LINK = "Link_Left_Gripper_Right_Finger"
+SUBGROUP = "fetch_arm"
+# gripper_link is the rigid gripper body frame which the constraint
+# residuals use for orientation locks.  For translation constraints we
+# use the TCP — the symmetric midpoint between the two finger link
+# origins — via :func:`ee_translation` / :func:`ee_position` below.
+EE_LINK = "gripper_link"
+LEFT_FINGER_LINK = "l_gripper_finger_link"
+RIGHT_FINGER_LINK = "r_gripper_finger_link"
 
 
 def ee_translation(ctx: "SymbolicContext"):

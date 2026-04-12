@@ -39,10 +39,10 @@ from fetch_planning.config.robot_config import (
 def _cache_root() -> Path:
     """Return the constraint cache directory.
 
-    Honours ``AUTOLIFE_CONSTRAINT_CACHE_DIR`` if set (useful for CI).
+    Honours ``FETCH_PLANNING_CONSTRAINT_CACHE_DIR`` if set (useful for CI).
     Otherwise falls back to ``~/.cache/fetch_planning/constraints``.
     """
-    override = os.environ.get("AUTOLIFE_CONSTRAINT_CACHE_DIR")
+    override = os.environ.get("FETCH_PLANNING_CONSTRAINT_CACHE_DIR")
     if override:
         return Path(override).expanduser().resolve()
     xdg = os.environ.get("XDG_CACHE_HOME")
@@ -70,11 +70,10 @@ class SymbolicContext:
     Holds the CasADi symbolic joint vector ``q`` matching the subgroup's
     active dimension, plus a ``pinocchio.casadi`` model for symbolic FK.
 
-    Unlike Autolife (which uses a planar root joint and a 25-element
-    pinocchio q with ``[x, y, cos(θ), sin(θ), j…]``), Fetch's whole-body
-    URDF encodes the base as three separate 1-DOF virtual joints
-    (prismatic x, prismatic y, revolute z) so ``pinocchio.nq == 11`` and
-    the active→pinocchio mapping is a straight copy (no trig encoding).
+    Fetch's whole-body URDF encodes the base as three separate 1-DOF
+    virtual joints (prismatic x, prismatic y, revolute z) so
+    ``pinocchio.nq == 11`` and the active→pinocchio mapping is a
+    straight copy (no trig encoding).
     """
 
     def __init__(
@@ -167,13 +166,10 @@ class SymbolicContext:
         full = self.base_config.copy()
         for i, idx in enumerate(self.active_indices):
             full[idx] = q_active_numeric[i]
-        q = np.empty(int(self.pin_model.nq))
-        q[0] = full[0]
-        q[1] = full[1]
-        q[2] = np.cos(full[2])
-        q[3] = np.sin(full[2])
-        q[4:] = full[3:]
-        pin.forwardKinematics(self.pin_model, self.pin_data, q)
+        # Fetch's whole-body URDF uses three separate 1-DOF base joints
+        # (prismatic x, prismatic y, revolute z) so pinocchio nq == 11
+        # and the mapping is a straight copy — no trig encoding needed.
+        pin.forwardKinematics(self.pin_model, self.pin_data, full)
         pin.updateFramePlacement(
             self.pin_model,
             self.pin_data,
@@ -265,12 +261,12 @@ class Constraint:
         so_path = cache_dir / "constraint.so"
 
         if not so_path.exists():
-            sys.stderr.write(f"[autolife] compiling constraint {sha[:8]}... ")
+            sys.stderr.write(f"[fetch_planning] compiling constraint {sha[:8]}... ")
             sys.stderr.flush()
             t0 = time.perf_counter()
             with _cwd(cache_dir):
                 f.generate("constraint.c")
-            compiler = os.environ.get("AUTOLIFE_CONSTRAINT_CC", "c++")
+            compiler = os.environ.get("FETCH_PLANNING_CONSTRAINT_CC", "c++")
             subprocess.run(
                 [
                     compiler,

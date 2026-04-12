@@ -30,10 +30,10 @@ def main(time_limit: float = 5.0):
 
     # The manifold: first two columns of the rotation matrix pinned.
     # (Column 3 is determined by the first two via orthonormality.)
-    left_rot = ctx.link_rotation(EE_LINK)
+    ee_rot = ctx.link_rotation(EE_LINK)
     residual: ca.SX = ca.vertcat(  # type: ignore[assignment]
-        left_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
-        left_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
+        ee_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
+        ee_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
     )
     orient = Constraint(residual=residual, q_sym=ctx.q, name="orient_lock")
 
