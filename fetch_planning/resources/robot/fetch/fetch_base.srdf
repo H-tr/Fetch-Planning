@@ -1,0 +1,10 @@
+<?xml version="1.0" ?>
+<!-- Minimal SRDF for the base-only Fetch model (3 DOF: base_x, base_y, base_theta).
+     No arm, torso, or head links present, so no self-collision pairs to disable. -->
+<robot name="fetch_base">
+    <group name="base">
+        <joint name="base_x_joint" />
+        <joint name="base_y_joint" />
+        <joint name="base_theta_joint" />
+    </group>
+</robot>

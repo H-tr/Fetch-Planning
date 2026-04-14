@@ -101,7 +101,7 @@ PLACE2_GRASP = np.array([0.33615000, 0.03522638, 1.06906802, 1.89672008,
 
 # ── Planning parameters ──────────────────────────────────────────────
 
-NAV_TIME = 0.1
+NAV_TIME = 0.5
 ARM_TIME = 1.0
 TUCK_ARM = HOME_JOINTS[3:].copy()
 BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
@@ -279,19 +279,18 @@ def main(
     nav_time: float = NAV_TIME,
 ) -> None:
     print("=" * 65)
-    print("  Whole-Body Non-Holonomic Motion Planning Demo")
-    print("  11 DOF: ReedsSheppStateSpace(3) + RealVectorStateSpace(8)")
-    print(f"  Planner: {nav_planner}  |  Budget: {nav_time * 1000:.0f} ms")
-    print("  Base + arm planned TOGETHER in CompoundStateSpace")
+    print("  Whole-Body Multilevel Motion Planning Demo")
+    print("  11 DOF: RS -> Compound(RS + R^8)  (OMPL fiber bundles)")
+    print(f"  Planner: QRRTStar (from '{nav_planner}')  |  Budget: {nav_time * 1000:.0f} ms")
+    print("  Reeds-Shepp base + reverse penalty + asymp. optimal rewiring")
     print("=" * 65)
 
     env = PyBulletEnv(fetch_robot_config, visualize=visualize)
 
     print("\n-- loading scene --")
-    load_room_meshes(env)
     cloud = load_room_pointcloud(stride=pcd_stride)
     print(f"  collision cloud: {len(cloud):,} points (stride={pcd_stride})")
-    env.add_pointcloud(cloud[::4], pointsize=2)
+    env.add_pointcloud(cloud[::2], pointsize=2)
 
     if visualize:
         env.sim.client.resetDebugVisualizerCamera(

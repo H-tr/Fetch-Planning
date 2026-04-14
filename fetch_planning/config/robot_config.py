@@ -5,10 +5,12 @@ The full configuration vector is 11-DOF:
     [3:4]   torso_lift_joint
     [4:11]  7-DOF arm (shoulder_pan → wrist_roll)
 
-The base is nonholonomic: motion is restricted to forward/backward + in-place
-rotation (differential drive). The planning state space uses a
-CompoundStateSpace = ReedsSheppStateSpace(turning_radius) + RealVectorStateSpace
-whenever base joints are active; otherwise a plain RealVectorStateSpace is used.
+The base is nonholonomic. When base joints are active, the planner uses OMPL
+multilevel planning (fiber bundles) with a hierarchy RS → RS × R^N, where RS
+is a ReedsSheppStateSpace with a reverse-segment penalty. Tree extension and
+tree-rewire both use Reeds-Shepp curves, and the default multilevel planner
+is QRRTStar so the reverse penalty enters the asymptotic path-cost objective.
+When only arm joints are active, a plain RealVectorStateSpace is used.
 """
 
 import os
@@ -28,12 +30,6 @@ JOINT_GROUPS = {
     "arm": slice(4, 11),  # shoulder_pan → wrist_roll (7 DOF)
 }
 
-# Nonholonomic parameters for the Fetch mobile base.
-# turning_radius=0.0 ⇒ true differential drive (in-place rotation allowed).
-# Fetch's real minimum turning radius is ~0 (it's a holonomic-base diff-drive);
-# 0.2 m is a comfortable compromise that keeps Reeds-Shepp curves smooth.
-BASE_TURNING_RADIUS: float = 0.2
-BASE_REVERSE_PENALTY: float = 20.0  # multiplier to discourage backing up
 
 CHAIN_CONFIGS: dict[str, ChainConfig] = {
     # 7-DOF arm from shoulder to gripper (torso + base fixed)
@@ -60,6 +56,15 @@ CHAIN_CONFIGS: dict[str, ChainConfig] = {
         urdf_path=os.path.join(_RESOURCES_DIR, "fetch.urdf"),
     ),
 }
+
+# Reeds-Shepp base parameters.
+# turning_radius ≈ 0.2 m is a soft compromise for Fetch's diff-drive base
+# (real minimum is ~0 since it can rotate in place, but small non-zero
+# keeps the RS curves smooth for the planner and visualization).
+# reverse_penalty multiplies the cost of reverse segments; it only bites
+# when using an asymptotically optimal planner (QRRTStar by default).
+BASE_TURNING_RADIUS: float = 0.2
+BASE_REVERSE_PENALTY: float = 20.0
 
 VIZ_URDF_PATH = os.path.join(_RESOURCES_DIR, "fetch.urdf")
 
@@ -110,8 +115,8 @@ _ARM_JOINTS = [
     "wrist_roll_joint",
 ]
 
-# Subgroups whose "joints" list contains any of _BASE_JOINTS are planned in a
-# CompoundStateSpace(ReedsShepp + RealVector). See ext/ompl_vamp/planner.hpp.
+# Subgroups whose "joints" list contains any of _BASE_JOINTS use multilevel
+# planning (SE2 → SE2 × R^N). See ext/ompl_vamp/planner.hpp.
 PLANNING_SUBGROUPS = {
     # Mobile base only (3 DOF, nonholonomic)
     "fetch_base": {"dof": 3, "joints": _BASE_JOINTS},

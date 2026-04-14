@@ -41,9 +41,12 @@ NB_MODULE(_ompl_vamp, m) {
            "frozen_config: full-body config for inactive joints.\n"
            "base_dim: how many leading active indices form the "
            "nonholonomic base (0 = arm-only, 3 = SE2 base).\n"
-           "turning_radius: Reeds-Shepp turning radius (metres).\n"
-           "reverse_penalty: cost multiplier for reverse segments "
-           "(1.0 = no penalty, >1.0 = discourage backing up).",
+           "turning_radius: Reeds-Shepp minimum turning radius (m).\n"
+           "reverse_penalty: multiplicative cost on reverse RS segments "
+           "(1.0 = none; >1.0 = discourage backing up; only bites for "
+           "asymptotically optimal planners).\n"
+           "When base_dim > 0, uses multilevel planning "
+           "(RS -> RS x R^N) via OMPL fiber bundles.",
            nb::arg("active_indices"), nb::arg("frozen_config"),
            nb::arg("base_dim") = 0,
            nb::arg("turning_radius") = 0.2,

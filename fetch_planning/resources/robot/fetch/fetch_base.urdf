@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="fetch_base">
+	<link name="world"/>
+	<joint name="base_x_joint" type="prismatic">
+		<parent link="world"/>
+		<child link="base_x_link"/>
+		<axis xyz="1 0 0"/>
+		<limit lower="-10.0" upper="10.0" effort="100" velocity="1.0"/>
+	</joint>
+	<link name="base_x_link"/>
+	<joint name="base_y_joint" type="prismatic">
+		<parent link="base_x_link"/>
+		<child link="base_y_link"/>
+		<axis xyz="0 1 0"/>
+		<limit lower="-10.0" upper="10.0" effort="100" velocity="1.0"/>
+	</joint>
+	<link name="base_y_link"/>
+	<joint name="base_theta_joint" type="revolute">
+		<parent link="base_y_link"/>
+		<child link="base_link"/>
+		<axis xyz="0 0 1"/>
+		<limit lower="-3.14159265" upper="3.14159265" effort="100" velocity="1.0"/>
+	</joint>
+
+	<link name="base_link">
+		<visual>
+			<origin rpy="0 0 0" xyz="0 0 0"></origin>
+			<geometry>
+				<mesh filename="package://meshes/base_link.dae"></mesh>
+			</geometry>
+			<material name="">
+				<color rgba="0.356 0.361 0.376 1"></color>
+			</material>
+		</visual>
+		<collision>
+			<geometry>
+				<sphere radius="0.24"></sphere>
+			</geometry>
+			<origin xyz="-0.12 0.0 0.182" rpy="0 0 0"></origin>
+		</collision>
+
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.225 0.00 0.31" rpy="0 0 0"></origin>
+		</collision>
+
+
+		<collision>
+			<geometry>
+				<sphere radius="0.22"></sphere>
+			</geometry>
+			<origin xyz="0.08 -0.06 0.16" rpy="0 0 0"></origin>
+		</collision>
+
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.215 -0.07 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.185 -0.135 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.13 -0.185 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.065 -0.2 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.01 -0.2 0.31" rpy="0 0 0"></origin>
+		</collision>
+
+		<collision>
+			<geometry>
+				<sphere radius="0.22"></sphere>
+			</geometry>
+			<origin xyz="0.08 0.06 0.16" rpy="0 0 0"></origin>
+		</collision>
+
+
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.215 0.07 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.185 0.135 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.13 0.185 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.065 0.2 0.31" rpy="0 0 0"></origin>
+		</collision>
+		<collision>
+			<geometry>
+				<sphere radius="0.066"></sphere>
+			</geometry>
+			<origin xyz="0.01 0.2 0.31" rpy="0 0 0"></origin>
+		</collision>
+
+
+
+	</link>
+</robot>

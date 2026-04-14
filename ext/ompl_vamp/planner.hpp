@@ -1,15 +1,26 @@
 /**
  * Main planner class — OMPL frontend with VAMP collision backend.
  *
- * Single constructor: the Python side decides which joints are active,
- * how many of them form the nonholonomic base, and what the turning
- * radius is.  No robot-specific constants are hardcoded here.
+ * Single constructor: the Python side decides which joints are active
+ * and how many of them form the nonholonomic base.  No robot-specific
+ * constants are hardcoded here.
  *
- * The planner exposes a uniform Python-friendly API:
- * ``add_pointcloud`` / ``add_sphere`` / ``clear_environment`` build
- * the obstacle environment, ``plan(start, goal, ...)`` runs OMPL,
- * ``validate(...)``, ``dimension()``, ``lower_bounds()``,
- * ``upper_bounds()`` and ``min_max_radii()`` round out the surface.
+ * When the active subgroup includes base joints (base_dim > 0), the
+ * planner uses OMPL's **multilevel planning** framework (fiber bundles)
+ * with a hierarchy RS → Compound(RS + R^N).  The lower RS level plans
+ * the base in isolation; the upper level adds the arm as the fiber,
+ * lifting the base path into the full configuration space.
+ *
+ * The base state space is ``PenalizedReedsSheppStateSpace`` — a
+ * ReedsSheppStateSpace with a multiplicative penalty on reverse
+ * segments that shows up in the path cost, so asymptotically optimal
+ * planners (QRRTStar, RRTstar, BITstar) actively steer away from
+ * backing up.
+ *
+ * When the subgroup is arm-only, the planner uses a standard OMPL
+ * geometric SimpleSetup with a RealVectorStateSpace (optionally
+ * projected onto a constraint manifold via CasADi-compiled
+ * constraints).
  */
 
 #pragma once
@@ -23,7 +34,14 @@
 #include <ompl/base/spaces/SE2StateSpace.h>
 #include <ompl/base/spaces/constraint/ConstrainedStateSpace.h>
 #include <ompl/base/spaces/constraint/ProjectedStateSpace.h>
+#include <ompl/geometric/PathSimplifier.h>
 #include <ompl/geometric/SimpleSetup.h>
+// OMPL — multilevel (fiber bundle) planners
+#include <ompl/multilevel/datastructures/projections/XRN_X_SE2.h>
+#include <ompl/multilevel/planners/qmp/QMP.h>
+#include <ompl/multilevel/planners/qmp/QMPStar.h>
+#include <ompl/multilevel/planners/qrrt/QRRT.h>
+#include <ompl/multilevel/planners/qrrt/QRRTStar.h>
 #include <cmath>
 
 #include "compiled_constraint.hpp"
@@ -82,18 +100,25 @@
 namespace fetch_planning {
 
 namespace og = ompl::geometric;
+namespace om = ompl::multilevel;
 
-/// ReedsSheppStateSpace with a multiplicative penalty on reverse segments.
+/// ReedsSheppStateSpace whose distance() penalises reverse segments.
 ///
-/// The standard distance() returns ``rho * sum(|seg_i|)``.  This
-/// subclass replaces it with ``rho * sum(w_i * |seg_i|)`` where
-/// ``w_i = reverse_penalty`` for segments with negative length (reverse)
-/// and ``w_i = 1`` otherwise.  A penalty of 1.0 recovers the standard
-/// behaviour; larger values steer the planner away from backing up.
+/// The standard RS distance is ``rho * sum(|seg_i|)``.  This subclass
+/// returns ``rho * sum(w_i * |seg_i|)`` with ``w_i = reverse_penalty``
+/// for negative-length (reverse) segments and ``w_i = 1`` otherwise.
+///
+/// Effect:
+/// * nearest-neighbor picks nodes that can be reached with less reverse
+/// * for asymptotically optimal planners (QRRTStar / RRTstar), the path
+///   cost includes the penalty, so rewiring prefers forward paths
+///
+/// The underlying interpolate() still traces the shortest RS curve,
+/// so the optimiser is what actually drives reverse out of the result.
 class PenalizedReedsSheppStateSpace : public ob::ReedsSheppStateSpace {
  public:
-  PenalizedReedsSheppStateSpace(double turningRadius, double reverse_penalty)
-      : ob::ReedsSheppStateSpace(turningRadius),
+  PenalizedReedsSheppStateSpace(double turning_radius, double reverse_penalty)
+      : ob::ReedsSheppStateSpace(turning_radius),
         reverse_penalty_(reverse_penalty) {}
 
   double distance(const ob::State *s1, const ob::State *s2) const override {
@@ -109,6 +134,16 @@ class PenalizedReedsSheppStateSpace : public ob::ReedsSheppStateSpace {
  private:
   double reverse_penalty_;
 };
+
+// Projection for the multilevel hierarchy Compound(RS + R^N) → RS.
+//
+// OMPL's ProjectionFactory only auto-detects SE2-tagged spaces; our
+// PenalizedReedsSheppStateSpace carries STATE_SPACE_REEDS_SHEPP so the
+// factory cannot build the projection itself.  However, the state
+// layout of ReedsSheppStateSpace is identical to SE2StateSpace (it is a
+// subclass), so OMPL's own Projection_SE2RN_SE2 works correctly when
+// constructed manually — its project/lift only use
+// ``SE2StateSpace::StateType`` casts, never the type tag.
 
 struct PlanResult {
   bool solved;
@@ -127,10 +162,15 @@ class OmplVampPlanner {
   ///     active_indices are pinned to these during collision checks.
   /// @param base_dim  How many of the *leading* active indices form
   ///     the nonholonomic base (0 = arm-only, 3 = SE2 base).
-  ///     When > 0, those indices use a ReedsSheppStateSpace; the
-  ///     rest use a RealVectorStateSpace.
-  /// @param turning_radius  Reeds-Shepp minimum turning radius
-  ///     (metres).  Ignored when base_dim == 0.
+  ///     When > 0, the planner uses OMPL multilevel planning with a
+  ///     hierarchy RS → RS × R^N.  When 0, a standard geometric
+  ///     planner on RealVectorStateSpace is used.
+  /// @param turning_radius  Reeds-Shepp minimum turning radius (m).
+  ///     Ignored when base_dim == 0.
+  /// @param reverse_penalty  Multiplicative cost on reverse RS segments.
+  ///     1.0 = no penalty; >1.0 = discourage backing up.  Only
+  ///     effective with asymptotically optimal planners (QRRTStar,
+  ///     RRTstar, BITstar) that minimise path cost during planning.
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config,
                   int base_dim = 0,
@@ -207,70 +247,18 @@ class OmplVampPlanner {
   auto plan(std::vector<double> start, std::vector<double> goal,
             const std::string &planner_name, double time_limit, bool simplify,
             bool interpolate) -> PlanResult {
-    const bool constrained = !constraints_.empty();
-    if (constrained) {
-      reject_incompatible_planner(planner_name);
-      check_constraint_satisfaction(start, "start");
-      check_constraint_satisfaction(goal, "goal");
-    }
-
-    ob::StateSpacePtr active_space = space_;
-    ob::SpaceInformationPtr si;
-    if (constrained) {
-      auto intersection = std::make_shared<ob::ConstraintIntersection>(
-          static_cast<unsigned int>(active_dim_), constraints_);
-      auto css =
-          std::make_shared<ob::ProjectedStateSpace>(space_, intersection);
-      auto csi = std::make_shared<ob::ConstrainedSpaceInformation>(css);
-      css->setup();
-      si = csi;
-      active_space = css;
-    } else {
-      si = std::make_shared<ob::SpaceInformation>(space_);
-    }
-
-    si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
-        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
-    if (!constrained) {
-      si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
-          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
-    }
-    si->setup();
-
-    og::SimpleSetup ss(si);
-    ss.setPlanner(create_planner(si, planner_name));
-
-    ob::ScopedState<> ompl_start(active_space);
-    ob::ScopedState<> ompl_goal(active_space);
-    write_scoped_state(ompl_start, start);
-    write_scoped_state(ompl_goal, goal);
-    ss.setStartAndGoalStates(ompl_start, ompl_goal);
-
-    auto t0 = std::chrono::steady_clock::now();
-    auto status = ss.solve(time_limit);
-    auto t1 = std::chrono::steady_clock::now();
-    auto elapsed_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-
-    PlanResult result;
-    result.planning_time_ns = elapsed_ns;
-    result.solved = static_cast<bool>(status);
-
-    if (result.solved) {
-      if (simplify) ss.simplifySolution();
-
-      auto &path = ss.getSolutionPath();
-      if (interpolate) path.interpolate();
-      result.path_cost = path.length();
-
-      for (std::size_t i = 0; i < path.getStateCount(); ++i) {
-        result.path.push_back(read_state(path.getState(i)));
+    if (has_base_) {
+      if (!constraints_.empty()) {
+        throw std::invalid_argument(
+            "Constrained planning is not supported for subgroups that "
+            "include mobile-base joints.  Use an arm-only subgroup for "
+            "constrained planning.");
       }
-    } else {
-      result.path_cost = std::numeric_limits<double>::infinity();
+      return plan_multilevel(start, goal, planner_name, time_limit, simplify,
+                             interpolate);
     }
-
-    return result;
+    return plan_geometric(start, goal, planner_name, time_limit, simplify,
+                          interpolate);
   }
 
   auto validate(std::vector<double> config) -> bool {
@@ -363,6 +351,10 @@ class OmplVampPlanner {
     auto hi_arr = hi.to_array();
 
     if (has_base_) {
+      // ReedsSheppStateSpace with reverse penalty — so that both
+      // distance/interpolation give non-holonomic car-like curves and
+      // the reverse penalty shows up in the path cost minimised by
+      // asymptotically optimal planners.
       auto se2 = std::make_shared<PenalizedReedsSheppStateSpace>(
           turning_radius_, reverse_penalty_);
       ob::RealVectorBounds se2_bounds(2);
@@ -371,6 +363,14 @@ class OmplVampPlanner {
       se2_bounds.setLow(1, base_y_lo_);
       se2_bounds.setHigh(1, base_y_hi_);
       se2->setBounds(se2_bounds);
+      // Reeds-Shepp curves are longer than straight lines, so the
+      // default 1%-of-maxextent segment fraction produces extremely
+      // fine subdivision (thousands of collision checks per edge) and
+      // the motion validator can spend seconds inside a single edge
+      // without returning to check the planner-termination condition.
+      // 2% keeps checks fine enough to catch obstacles on a 0.2 m
+      // turning radius while letting the planner breathe.
+      se2->setLongestValidSegmentFraction(0.02);
 
       const int arm_active_dim = active_dim_ - base_dim_;
 
@@ -394,6 +394,7 @@ class OmplVampPlanner {
         compound->addSubspace(se2, 1.0);
         compound->addSubspace(rv, 1.0);
         compound->lock();
+        compound->setLongestValidSegmentFraction(0.02);
         space_ = compound;
       }
     } else {
@@ -470,6 +471,184 @@ class OmplVampPlanner {
     return out;
   }
 
+  // ── Multilevel planning (base-included subgroups) ──────────────────
+
+  auto plan_multilevel(const std::vector<double> &start,
+                       const std::vector<double> &goal,
+                       const std::string &planner_name, double time_limit,
+                       bool simplify, bool interpolate) -> PlanResult {
+    // Build a 2-level hierarchy:
+    //   Level 0: Reeds-Shepp (base pose, non-holonomic)
+    //   Level 1: Compound(Reeds-Shepp + R^N) (full active space)
+    // OMPL's ProjectionFactory cannot auto-detect this mapping because
+    // our ReedsShepp subclass carries STATE_SPACE_REEDS_SHEPP rather
+    // than STATE_SPACE_SE2.  We supply a custom projection that works
+    // directly on the state layout.
+    std::vector<ob::SpaceInformationPtr> si_vec;
+    std::vector<om::ProjectionPtr> proj_vec;
+
+    // Level 0: Reeds-Shepp ────────────────────────────────────────────
+    auto level0_rs = std::make_shared<PenalizedReedsSheppStateSpace>(
+        turning_radius_, reverse_penalty_);
+    {
+      ob::RealVectorBounds bnd(2);
+      bnd.setLow(0, base_x_lo_);
+      bnd.setHigh(0, base_x_hi_);
+      bnd.setLow(1, base_y_lo_);
+      bnd.setHigh(1, base_y_hi_);
+      level0_rs->setBounds(bnd);
+      level0_rs->setLongestValidSegmentFraction(0.02);
+
+      auto si = std::make_shared<ob::SpaceInformation>(level0_rs);
+      // Base-only check — a proper relaxation of the full-body check,
+      // using the dedicated FetchBase VAMP model (3 DOF, 14 spheres).
+      // Any pose valid at the top level projects to a base-
+      // collision-free pose here, giving the multilevel framework an
+      // admissible abstraction.
+      si->setStateValidityChecker(
+          std::make_shared<BaseOnlyValidityChecker>(si, env_));
+      si->setup();
+      si_vec.push_back(si);
+    }
+
+    // Level 1: Compound(RS + R^N)  (only when arm joints are active) ──
+    if (!base_only_) {
+      auto si = std::make_shared<ob::SpaceInformation>(space_);
+      si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
+          si, env_, active_indices_, frozen_config_,
+          /*has_base=*/true, /*base_only=*/false));
+      si->setup();
+      si_vec.push_back(si);
+
+      // OMPL's own Projection_SE2RN_SE2 works here because
+      // ReedsSheppStateSpace inherits from SE2StateSpace (same state
+      // layout).  The ProjectionFactory can't auto-pick it since our
+      // space's type tag is STATE_SPACE_REEDS_SHEPP, but constructing
+      // it manually bypasses that check.
+      auto proj = std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_rs);
+      // Eagerly initialise the fiber space (sampler + scratch state),
+      // which the framework relies on for lifting.
+      proj->makeFiberSpace();
+      proj_vec.push_back(proj);
+    }
+
+    // Create multilevel planner and problem definition ─────────────────
+    auto &top_si = si_vec.back();
+    auto planner = create_multilevel_planner(si_vec, proj_vec, planner_name);
+
+    auto pdef = std::make_shared<ob::ProblemDefinition>(top_si);
+    ob::ScopedState<> ompl_start(top_si->getStateSpace());
+    ob::ScopedState<> ompl_goal(top_si->getStateSpace());
+    write_scoped_state(ompl_start, start);
+    write_scoped_state(ompl_goal, goal);
+    pdef->setStartAndGoalStates(ompl_start, ompl_goal);
+
+    planner->setProblemDefinition(pdef);
+    planner->setup();
+
+    // Solve ────────────────────────────────────────────────────────────
+    auto t0 = std::chrono::steady_clock::now();
+    auto status = planner->ob::Planner::solve(time_limit);
+    auto t1 = std::chrono::steady_clock::now();
+    auto elapsed_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+
+    PlanResult result;
+    result.planning_time_ns = elapsed_ns;
+    result.solved = static_cast<bool>(status);
+
+    if (result.solved) {
+      auto &path = *pdef->getSolutionPath()->as<og::PathGeometric>();
+
+      if (simplify) {
+        og::PathSimplifier simplifier(top_si);
+        simplifier.simplifyMax(path);
+      }
+      if (interpolate) path.interpolate();
+      result.path_cost = path.length();
+
+      for (std::size_t i = 0; i < path.getStateCount(); ++i) {
+        result.path.push_back(read_state(path.getState(i)));
+      }
+    } else {
+      result.path_cost = std::numeric_limits<double>::infinity();
+    }
+    return result;
+  }
+
+  // ── Geometric planning (arm-only subgroups, with constraints) ─────
+
+  auto plan_geometric(const std::vector<double> &start,
+                      const std::vector<double> &goal,
+                      const std::string &planner_name, double time_limit,
+                      bool simplify, bool interpolate) -> PlanResult {
+    const bool constrained = !constraints_.empty();
+    if (constrained) {
+      reject_incompatible_planner(planner_name);
+      check_constraint_satisfaction(start, "start");
+      check_constraint_satisfaction(goal, "goal");
+    }
+
+    ob::StateSpacePtr active_space = space_;
+    ob::SpaceInformationPtr si;
+    if (constrained) {
+      auto intersection = std::make_shared<ob::ConstraintIntersection>(
+          static_cast<unsigned int>(active_dim_), constraints_);
+      auto css =
+          std::make_shared<ob::ProjectedStateSpace>(space_, intersection);
+      auto csi = std::make_shared<ob::ConstrainedSpaceInformation>(css);
+      css->setup();
+      si = csi;
+      active_space = css;
+    } else {
+      si = std::make_shared<ob::SpaceInformation>(space_);
+    }
+
+    si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
+        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+    if (!constrained) {
+      si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
+          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+    }
+    si->setup();
+
+    og::SimpleSetup ss(si);
+    ss.setPlanner(create_geometric_planner(si, planner_name));
+
+    ob::ScopedState<> ompl_start(active_space);
+    ob::ScopedState<> ompl_goal(active_space);
+    write_scoped_state(ompl_start, start);
+    write_scoped_state(ompl_goal, goal);
+    ss.setStartAndGoalStates(ompl_start, ompl_goal);
+
+    auto t0 = std::chrono::steady_clock::now();
+    auto status = ss.solve(time_limit);
+    auto t1 = std::chrono::steady_clock::now();
+    auto elapsed_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+
+    PlanResult result;
+    result.planning_time_ns = elapsed_ns;
+    result.solved = static_cast<bool>(status);
+
+    if (result.solved) {
+      if (simplify) ss.simplifySolution();
+
+      auto &path = ss.getSolutionPath();
+      if (interpolate) path.interpolate();
+      result.path_cost = path.length();
+
+      for (std::size_t i = 0; i < path.getStateCount(); ++i) {
+        result.path.push_back(read_state(path.getState(i)));
+      }
+    } else {
+      result.path_cost = std::numeric_limits<double>::infinity();
+    }
+    return result;
+  }
+
+  // ── Constraint helpers ────────────────────────────────────────────
+
   void check_constraint_satisfaction(const std::vector<double> &active_q,
                                      const char *which) const {
     Eigen::VectorXd q(active_dim_);
@@ -507,8 +686,51 @@ class OmplVampPlanner {
     }
   }
 
-  static auto create_planner(const ob::SpaceInformationPtr &si,
-                             const std::string &name) -> ob::PlannerPtr {
+  // ── Planner factories ─────────────────────────────────────────────
+
+  static auto create_multilevel_planner(
+      std::vector<ob::SpaceInformationPtr> &si_vec,
+      std::vector<om::ProjectionPtr> &proj_vec,
+      const std::string &name) -> ob::PlannerPtr {
+    // Use the 3-arg constructor whenever we have custom projections
+    // (proj_vec.size() == si_vec.size() - 1); otherwise fall back to the
+    // 1-arg auto-detection constructor (used when there is a single
+    // level with no projection needed).
+    const bool use_custom = !proj_vec.empty();
+
+    // Direct multilevel planner names.
+    if (name == "qrrt")
+      return use_custom ? std::make_shared<om::QRRT>(si_vec, proj_vec)
+                        : std::make_shared<om::QRRT>(si_vec);
+    if (name == "qmp")
+      return use_custom ? std::make_shared<om::QMP>(si_vec, proj_vec)
+                        : std::make_shared<om::QMP>(si_vec);
+    if (name == "qmpstar")
+      return use_custom ? std::make_shared<om::QMPStar>(si_vec, proj_vec)
+                        : std::make_shared<om::QMPStar>(si_vec);
+    if (name == "qrrtstar")
+      return use_custom ? std::make_shared<om::QRRTStar>(si_vec, proj_vec)
+                        : std::make_shared<om::QRRTStar>(si_vec);
+    // PRM-style names → QMP.
+    if (name == "prm" || name == "lazyprm")
+      return use_custom ? std::make_shared<om::QMP>(si_vec, proj_vec)
+                        : std::make_shared<om::QMP>(si_vec);
+    if (name == "prmstar" || name == "lazyprmstar")
+      return use_custom ? std::make_shared<om::QMPStar>(si_vec, proj_vec)
+                        : std::make_shared<om::QMPStar>(si_vec);
+    // Non-optimal tree names → QRRT.
+    if (name == "rrtc" || name == "rrtconnect" || name == "rrt")
+      return use_custom ? std::make_shared<om::QRRT>(si_vec, proj_vec)
+                        : std::make_shared<om::QRRT>(si_vec);
+    // Default (including all "star/optimal" geometric names) → QRRTStar.
+    // The reverse penalty only bites for asymptotically optimal planners.
+    return use_custom ? std::make_shared<om::QRRTStar>(si_vec, proj_vec)
+                      : std::make_shared<om::QRRTStar>(si_vec);
+  }
+
+  static auto create_geometric_planner(const ob::SpaceInformationPtr &si,
+                                       const std::string &name)
+      -> ob::PlannerPtr {
     if (name == "rrtc" || name == "rrtconnect")
       return std::make_shared<og::RRTConnect>(si);
     if (name == "rrt") return std::make_shared<og::RRT>(si);

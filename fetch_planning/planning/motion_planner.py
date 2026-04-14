@@ -10,10 +10,16 @@ state space while frozen joints are expanded to the full 11-DOF
 Fetch whole-body config before collision checks.
 
 Subgroups that include any of the base joints (``base_x_joint``,
-``base_y_joint``, ``base_theta_joint``) are planned over an OMPL
-``CompoundStateSpace(ReedsSheppStateSpace + RealVectorStateSpace)``
-so the nonholonomic differential-drive constraint is enforced
-natively by the sampler and distance/interpolate methods.
+``base_y_joint``, ``base_theta_joint``) use OMPL multilevel
+planning (fiber bundles) with a hierarchy ``RS → RS × R^N``
+where RS is a Reeds-Shepp state space with a reverse-segment
+penalty.  Tree extension and rewire use Reeds-Shepp curves
+between samples, and the default multilevel planner is
+QRRTStar so the reverse penalty enters the path-cost objective.
+
+Arm-only subgroups use standard OMPL geometric planning and
+optionally support CasADi-compiled manifold constraints
+(``ProjectedStateSpace``).
 """
 
 from __future__ import annotations
@@ -184,10 +190,9 @@ class MotionPlanner:
     @property
     def has_base(self) -> bool:
         """True if any of the mobile base joints (x, y, theta) are active
-        in this planner. When True, the underlying OMPL state space is a
-        CompoundStateSpace(ReedsSheppStateSpace + RealVectorStateSpace)
-        and the nonholonomic differential-drive constraint is enforced by
-        construction."""
+        in this planner. When True, the planner uses OMPL multilevel
+        planning with Reeds-Shepp curves (hierarchy RS → RS×R^N) and
+        QRRTStar as the default optimal tree planner."""
         return self._has_base
 
     def set_base_bounds(
