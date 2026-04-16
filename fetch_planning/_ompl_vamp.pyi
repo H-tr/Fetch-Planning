@@ -77,6 +77,9 @@ class OmplVampPlanner:
     ) -> None:
         """Add a point cloud obstacle to the collision environment.
 
+        Multiple calls accumulate; the planner keeps every cloud handed
+        to it.
+
         Args:
             points: ``(N, 3)`` array of obstacle positions in world frame.
             r_min: Minimum robot collision-sphere radius (from
@@ -85,6 +88,15 @@ class OmplVampPlanner:
                 :meth:`min_max_radii`).
             point_radius: Inflation radius applied to every cloud point.
         """
+        ...
+    def remove_pointcloud(self) -> bool:
+        """Drop the most-recently-added pointcloud.
+
+        Returns ``False`` if there was none to remove.
+        """
+        ...
+    def has_pointcloud(self) -> bool:
+        """``True`` if at least one pointcloud is currently registered."""
         ...
     def add_sphere(self, center: Sequence[float], radius: float) -> None:
         """Add a single sphere obstacle (centre + radius) to the environment."""
@@ -114,6 +126,40 @@ class OmplVampPlanner:
         ...
     def num_constraints(self) -> int:
         """Number of constraints currently registered."""
+        ...
+    def add_compiled_cost(
+        self,
+        so_path: str,
+        symbol_name: str,
+        ambient_dim: int,
+        weight: float = 1.0,
+    ) -> None:
+        """Load a CasADi-generated shared library as a soft path cost.
+
+        The cost is wrapped as an ``ompl::StateCostIntegralObjective`` —
+        trapezoidally integrated along every motion — and drives the
+        search of asymptotically-optimal planners (RRT*, BIT*, AIT*,
+        QRRT*, …).  Multiple costs are summed with their ``weight``.
+
+        For whole-body / base-including subgroups the cost is set on
+        the multilevel top SpaceInformation and combined with the
+        Reeds-Shepp reverse penalty (which lives in the state-space
+        distance, not the objective) — non-holonomic shaping is
+        preserved.
+
+        Args:
+            so_path: Path to the compiled ``.so`` file.
+            symbol_name: CasADi function symbol name inside the library.
+            ambient_dim: Dimension of the joint space (must match
+                :meth:`dimension`).
+            weight: Non-negative scalar multiplier applied to the cost.
+        """
+        ...
+    def clear_costs(self) -> None:
+        """Drop every accumulated cost."""
+        ...
+    def num_costs(self) -> int:
+        """Number of costs currently registered."""
         ...
     def plan(
         self,

@@ -27,8 +27,10 @@
 
 #include <ompl/base/ConstrainedSpaceInformation.h>
 #include <ompl/base/Constraint.h>
+#include <ompl/base/OptimizationObjective.h>
 #include <ompl/base/SpaceInformation.h>
 #include <ompl/base/StateSpace.h>
+#include <ompl/base/objectives/PathLengthOptimizationObjective.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/spaces/ReedsSheppStateSpace.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
@@ -45,6 +47,7 @@
 #include <cmath>
 
 #include "compiled_constraint.hpp"
+#include "compiled_cost.hpp"
 #include "validity.hpp"
 // OMPL — informed trees
 #include <ompl/geometric/planners/informedtrees/ABITstar.h>
@@ -212,6 +215,19 @@ class OmplVampPlanner {
     sync_env();
   }
 
+  /// Drop the most-recently-added pointcloud.  Returns false if there
+  /// was none registered.
+  auto remove_pointcloud() -> bool {
+    if (float_env_.pointclouds.empty()) return false;
+    float_env_.pointclouds.pop_back();
+    sync_env();
+    return true;
+  }
+
+  auto has_pointcloud() const -> bool {
+    return !float_env_.pointclouds.empty();
+  }
+
   void add_sphere(const std::array<float, 3> &center, float radius) {
     float_env_.spheres.emplace_back(vamp::collision::Sphere<float>{
         center[0], center[1], center[2], radius});
@@ -243,6 +259,49 @@ class OmplVampPlanner {
   void clear_constraints() { constraints_.clear(); }
 
   std::size_t num_constraints() const { return constraints_.size(); }
+
+  // ── Cost API ──────────────────────────────────────────────────────
+  //
+  // Costs are soft per-state terms integrated along every motion by
+  // OMPL's StateCostIntegralObjective.  They do not constrain the
+  // feasible set — collision checking still does that — but they
+  // shape the solution returned by asymptotically-optimal planners
+  // (RRT*, BIT*, AIT*, QRRT* …).  Without a user-supplied cost the
+  // planner falls back to OMPL's default path-length objective.
+  //
+  // For multilevel plans the cost objective is set on the top
+  // SpaceInformation's ProblemDefinition.  The
+  // ``PenalizedReedsSheppStateSpace::distance()`` reverse-segment
+  // penalty lives in the *state-space distance*, not in this
+  // objective, so user costs are added on top — the non-holonomic
+  // shaping is preserved.
+  //
+  // Multiple costs are summed via MultiOptimizationObjective with
+  // the weights supplied at add time.
+
+  void add_compiled_cost(const std::string &so_path,
+                         const std::string &symbol_name,
+                         unsigned int ambient_dim, double weight) {
+    if (static_cast<int>(ambient_dim) != active_dim_) {
+      throw std::invalid_argument(
+          "add_compiled_cost: ambient_dim (" + std::to_string(ambient_dim) +
+          ") does not match planner active dimension (" +
+          std::to_string(active_dim_) + ")");
+    }
+    if (weight < 0.0) {
+      throw std::invalid_argument("add_compiled_cost: weight must be >= 0");
+    }
+    cost_libs_.push_back(
+        std::make_shared<CostLibrary>(ambient_dim, so_path, symbol_name));
+    cost_weights_.push_back(weight);
+  }
+
+  void clear_costs() {
+    cost_libs_.clear();
+    cost_weights_.clear();
+  }
+
+  std::size_t num_costs() const { return cost_libs_.size(); }
 
   auto plan(std::vector<double> start, std::vector<double> goal,
             const std::string &planner_name, double time_limit, bool simplify,
@@ -336,6 +395,8 @@ class OmplVampPlanner {
   FloatEnv float_env_;
   VampEnv env_;
   std::vector<ob::ConstraintPtr> constraints_;
+  std::vector<std::shared_ptr<CostLibrary>> cost_libs_;
+  std::vector<double> cost_weights_;
 
   void sync_env() { env_ = VampEnv(float_env_); }
 
@@ -543,6 +604,15 @@ class OmplVampPlanner {
     write_scoped_state(ompl_goal, goal);
     pdef->setStartAndGoalStates(ompl_start, ompl_goal);
 
+    // Soft costs are integrated by QRRTStar/RRTstar/BIT* family.  The
+    // ``PenalizedReedsSheppStateSpace::distance()`` reverse penalty
+    // lives in the state-space distance, not in this objective, so
+    // adding a cost here does NOT replace the non-holonomic shaping.
+    if (!cost_libs_.empty()) {
+      pdef->setOptimizationObjective(
+          build_objective(top_si, /*active_top=*/true));
+    }
+
     planner->setProblemDefinition(pdef);
     planner->setup();
 
@@ -621,6 +691,14 @@ class OmplVampPlanner {
     write_scoped_state(ompl_goal, goal);
     ss.setStartAndGoalStates(ompl_start, ompl_goal);
 
+    // Apply user-supplied soft costs.  Only consumed by asymptotically
+    // optimal planners; for planners that don't read it the call is
+    // harmless.
+    if (!cost_libs_.empty()) {
+      ss.setOptimizationObjective(
+          build_objective(si, /*active_top=*/false));
+    }
+
     auto t0 = std::chrono::steady_clock::now();
     auto status = ss.solve(time_limit);
     auto t1 = std::chrono::steady_clock::now();
@@ -684,6 +762,58 @@ class OmplVampPlanner {
             "est, biest, sbl, stride.");
       }
     }
+  }
+
+  // ── Objective builder ────────────────────────────────────────────
+  //
+  // Combine every CompiledCost into a single OMPL objective.  The
+  // ``active_top`` flag selects the right state-extraction layout for
+  // the multilevel "top" SpaceInformation (Compound when arm is
+  // active, SE2-only when base-only) versus the geometric / arm-only
+  // RealVector layout.  The dlopen'd ``CostLibrary`` is reused; only
+  // the thin adapter is rebuilt per plan() call.
+  //
+  // For base-including subgroups we ALWAYS keep a path-length term as
+  // the baseline, so the ``PenalizedReedsSheppStateSpace::distance()``
+  // reverse penalty stays inside the optimisation objective that
+  // QRRTStar / RRT* rewires against.  Without this, a CompiledCost
+  // would silently shadow the RS distance contribution to motionCost
+  // and the non-holonomic shaping would only affect nearest-neighbour
+  // selection, not rewiring decisions.
+  auto build_objective(const ob::SpaceInformationPtr &si, bool active_top) const
+      -> std::shared_ptr<ob::OptimizationObjective> {
+    const CompiledCost::Layout layout =
+        active_top ? (base_only_ ? CompiledCost::Layout::kSE2Only
+                                 : CompiledCost::Layout::kCompound)
+                   : CompiledCost::Layout::kPlain;
+
+    const bool keep_path_length = active_top && has_base_;
+
+    if (cost_libs_.size() == 1 && !keep_path_length) {
+      return std::make_shared<CompiledCost>(si, cost_libs_[0],
+                                            cost_weights_[0], layout,
+                                            active_dim_);
+    }
+
+    auto multi = std::make_shared<ob::MultiOptimizationObjective>(si);
+    if (keep_path_length) {
+      // Path-length objective integrates ob::motionCost via
+      // distance(), which for our PenalizedReedsSheppStateSpace
+      // already includes the reverse-segment penalty.
+      multi->addObjective(
+          std::make_shared<ob::PathLengthOptimizationObjective>(si), 1.0);
+    }
+    for (std::size_t i = 0; i < cost_libs_.size(); ++i) {
+      // MultiOptimizationObjective applies its own weight on top of
+      // whatever stateCost() returns; bake the per-cost weight into
+      // the adapter (weight 1.0 here) to keep a single source of
+      // truth for the scaling factor.
+      multi->addObjective(
+          std::make_shared<CompiledCost>(si, cost_libs_[i], cost_weights_[i],
+                                         layout, active_dim_),
+          1.0);
+    }
+    return multi;
   }
 
   // ── Planner factories ─────────────────────────────────────────────

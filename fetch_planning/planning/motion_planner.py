@@ -69,6 +69,7 @@ class MotionPlanner:
         pointcloud: np.ndarray | None = None,
         base_config: np.ndarray | None = None,
         constraints: list | None = None,
+        costs: list | None = None,
     ) -> None:
         from fetch_planning._ompl_vamp import OmplVampPlanner
         from fetch_planning.config.robot_config import (
@@ -157,6 +158,9 @@ class MotionPlanner:
         if constraints:
             self._push_constraints(constraints)
 
+        if costs:
+            self._push_costs(costs)
+
     # ── Properties ────────────────────────────────────────────────────
 
     @property
@@ -242,6 +246,84 @@ class MotionPlanner:
                 c.ambient_dim,
                 c.co_dim,
             )
+
+    def clear_constraints(self) -> None:
+        """Remove all constraints from the planner."""
+        self._planner.clear_constraints()
+
+    def set_constraints(self, constraints: list) -> None:
+        """Replace all constraints: clear existing, then push new ones."""
+        self.clear_constraints()
+        self._push_constraints(constraints)
+
+    # ── Cost integration ──────────────────────────────────────────────
+
+    def _push_costs(self, costs) -> None:
+        """Push compiled CasADi costs to the C++ planner.
+
+        Costs are soft per-state terms that shape the solution returned
+        by asymptotically-optimal planners (``rrtstar``, ``bitstar``,
+        ``qrrtstar``, …).  For whole-body subgroups (``fetch_whole_body``,
+        ``fetch_base_arm``) the default multilevel planner is QRRTStar,
+        which already minimises the ``PenalizedReedsSheppStateSpace``
+        distance — user costs are added on top of that penalty, so the
+        non-holonomic reverse discouragement is preserved.
+        """
+        from fetch_planning.planning.costs import Cost
+
+        for c in costs:
+            if not isinstance(c, Cost):
+                raise TypeError(
+                    f"costs must be Cost instances from "
+                    f"fetch_planning.planning.costs; "
+                    f"got {type(c).__name__}"
+                )
+            if c.ambient_dim != self._ndof:
+                raise ValueError(
+                    f"Cost ambient_dim ({c.ambient_dim}) does not match "
+                    f"planner active dimension ({self._ndof}).  Build the "
+                    f"Cost with a SymbolicContext for the same subgroup."
+                )
+            self._planner.add_compiled_cost(
+                str(c.so_path),
+                c.symbol_name,
+                c.ambient_dim,
+                float(c.weight),
+            )
+
+    def clear_costs(self) -> None:
+        """Remove all costs from the planner (falls back to path length)."""
+        self._planner.clear_costs()
+
+    def set_costs(self, costs: list) -> None:
+        """Replace all costs: clear existing, then push new ones."""
+        self.clear_costs()
+        self._push_costs(costs)
+
+    # ── Pointcloud environment ────────────────────────────────────────
+
+    def add_pointcloud(self, pointcloud: np.ndarray) -> None:
+        """Add a point cloud to the scene after construction.
+
+        The C++ planner keeps every cloud handed to it — multiple calls
+        accumulate.  Uses ``config.point_radius`` as the per-point
+        inflation radius.
+
+        Args:
+            pointcloud: ``(N, 3)`` array of obstacle positions in world
+                frame.
+        """
+        r_min, r_max = self._planner.min_max_radii()
+        self._planner.add_pointcloud(
+            np.asarray(pointcloud, dtype=np.float32).tolist(),
+            r_min,
+            r_max,
+            self._config.point_radius,
+        )
+
+    def clear_environment(self) -> None:
+        """Drop every registered obstacle (spheres and point clouds)."""
+        self._planner.clear_environment()
 
     # ── Subgroup helpers ──────────────────────────────────────────────
 
@@ -384,6 +466,7 @@ def create_planner(
     pointcloud: np.ndarray | None = None,
     base_config: np.ndarray | None = None,
     constraints: list | None = None,
+    costs: list | None = None,
 ) -> MotionPlanner:
     """Create a motion planner for any robot or subgroup.
 
@@ -405,8 +488,22 @@ def create_planner(
             switches to ``ProjectedStateSpace`` and projects every state
             onto the constraint manifold.  Both ``start`` and ``goal``
             passed to ``plan(...)`` must already lie on the manifold.
+            Not supported for subgroups that include mobile-base joints.
+        costs: Optional list of
+            :class:`~fetch_planning.planning.costs.Cost` instances
+            (CasADi-backed).  Soft per-state terms summed with their
+            weights and trapezoidally integrated along every motion —
+            the asymptotically-optimal planners (``rrtstar``,
+            ``bitstar``, ``aitstar``, ``qrrtstar``, …) minimise this
+            objective.  For whole-body planners the multilevel backend
+            uses QRRTStar by default, whose cost aggregation already
+            includes the Reeds-Shepp reverse penalty — user costs add
+            on top, preserving the non-holonomic shaping.  Without any
+            costs the planner uses OMPL's default path-length objective.
 
     Returns:
         A :class:`MotionPlanner` instance.
     """
-    return MotionPlanner(robot_name, config, pointcloud, base_config, constraints)
+    return MotionPlanner(
+        robot_name, config, pointcloud, base_config, constraints, costs
+    )

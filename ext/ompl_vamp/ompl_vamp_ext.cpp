@@ -57,6 +57,8 @@ NB_MODULE(_ompl_vamp, m) {
       .def("add_pointcloud", &OmplVampPlanner::add_pointcloud,
            nb::arg("points"), nb::arg("r_min"), nb::arg("r_max"),
            nb::arg("point_radius"))
+      .def("remove_pointcloud", &OmplVampPlanner::remove_pointcloud)
+      .def("has_pointcloud", &OmplVampPlanner::has_pointcloud)
       .def("add_sphere", &OmplVampPlanner::add_sphere, nb::arg("center"),
            nb::arg("radius"))
       .def("clear_environment", &OmplVampPlanner::clear_environment)
@@ -65,6 +67,11 @@ NB_MODULE(_ompl_vamp, m) {
            nb::arg("co_dim"))
       .def("clear_constraints", &OmplVampPlanner::clear_constraints)
       .def("num_constraints", &OmplVampPlanner::num_constraints)
+      .def("add_compiled_cost", &OmplVampPlanner::add_compiled_cost,
+           nb::arg("so_path"), nb::arg("symbol_name"), nb::arg("ambient_dim"),
+           nb::arg("weight") = 1.0)
+      .def("clear_costs", &OmplVampPlanner::clear_costs)
+      .def("num_costs", &OmplVampPlanner::num_costs)
       .def("plan", &OmplVampPlanner::plan, nb::arg("start"), nb::arg("goal"),
            nb::arg("planner_name") = "rrtc", nb::arg("time_limit") = 10.0,
            nb::arg("simplify") = true, nb::arg("interpolate") = true)
