@@ -9,7 +9,7 @@ from start to goal.
 A translucent blue plate is drawn at the target height to show the
 manifold in 3D.
 
-    pixi run python examples/constrained_planning/plane.py
+    pixi run python examples/planning/constrained/plane.py
 """
 
 from _shared import SUBGROUP, ee_position, ee_translation, find_goal, run_demo, setup

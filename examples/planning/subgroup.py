@@ -7,7 +7,7 @@ vary only ``torso_lift_joint``; replace them with any 11-DOF array
 (e.g. the live state from your env) to plan around an arbitrary
 pose.
 
-    pixi run python examples/subgroup_planning_example.py
+    pixi run python examples/planning/subgroup.py
 """
 
 import numpy as np

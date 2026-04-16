@@ -9,8 +9,8 @@ Renders the path so you can visually judge whether:
   * the arm interpolates smoothly alongside the base
   * the reverse penalty keeps the base from backing up unnecessarily
 
-    pixi run python examples/multilevel_single_step.py
-    pixi run python examples/multilevel_single_step.py --dx=0.5 --dtheta=1.57
+    pixi run python examples/planning/multilevel_single_step.py
+    pixi run python examples/planning/multilevel_single_step.py --dx=0.5 --dtheta=1.57
 """
 
 from __future__ import annotations

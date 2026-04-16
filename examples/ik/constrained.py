@@ -8,7 +8,7 @@ Shows the three main features of the Pink backend:
 All solvers are created through the same ``create_ik_solver`` factory.
 
 Usage:
-    python examples/constrained_ik_example.py
+    python examples/ik/constrained.py
 """
 
 import os

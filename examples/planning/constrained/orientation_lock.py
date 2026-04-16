@@ -11,7 +11,7 @@ RGB coordinate frames are drawn at the start and goal gripper
 positions — they look identical because the rotation is locked —
 and a faint magenta rod connects them to show the swept translation.
 
-    pixi run python examples/constrained_planning/orientation_lock.py
+    pixi run python examples/planning/constrained/orientation_lock.py
 """
 
 import casadi as ca

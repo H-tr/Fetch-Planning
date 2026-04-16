@@ -7,8 +7,8 @@ checker sees every point as a small sphere (``point_radius``), so
 the planner has to curve the arm around the table to reach the
 sampled goal.
 
-    pixi run python examples/motion_planning_example.py
-    pixi run python examples/motion_planning_example.py --planner_name bitstar --time_limit 3
+    pixi run python examples/planning/motion.py
+    pixi run python examples/planning/motion.py --planner_name bitstar --time_limit 3
 """
 
 from pathlib import Path

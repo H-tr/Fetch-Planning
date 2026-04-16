@@ -52,10 +52,10 @@ if result.success:
     print(f"solution: {np.round(result.joint_positions, 4)}")
 ```
 
-The interactive visualization lives in `examples/ik_example_vis.py`:
+The interactive visualization lives in `examples/ik/basic_vis.py`:
 
 ```bash
-pixi run -e dev python examples/ik_example_vis.py
+pixi run -e dev python examples/ik/basic_vis.py
 ```
 
 It sweeps the left arm, right arm, and both whole-body chains,
@@ -129,7 +129,7 @@ solver.set_collision_context(collision_ctx)
 ```
 
 ```bash
-pixi run -e dev python examples/constrained_ik_example_vis.py
+pixi run -e dev python examples/ik/constrained_vis.py
 ```
 
 The clip above sweeps four reach targets — front, high, side, and
@@ -183,12 +183,12 @@ if result.success:
     env.animate_path(planner.embed_path(result.path))
 ```
 
-The runnable version lives at `examples/motion_planning_example.py`
+The runnable version lives at `examples/planning/motion.py`
 and uses the bundled `table.ply` — no downloads needed.
 
 ```bash
-pixi run -e dev python examples/motion_planning_example.py
-pixi run -e dev python examples/motion_planning_example.py --planner_name bitstar --time_limit 3
+pixi run -e dev python examples/planning/motion.py
+pixi run -e dev python examples/planning/motion.py --planner_name bitstar --time_limit 3
 ```
 
 ---
@@ -247,8 +247,8 @@ if result.success:
 ```
 
 ```bash
-pixi run -e dev python examples/subgroup_planning_example.py
-pixi run -e dev python examples/subgroup_planning_example.py --planner_name prm
+pixi run -e dev python examples/planning/subgroup.py
+pixi run -e dev python examples/planning/subgroup.py --planner_name prm
 ```
 
 The example above iterates through several kinematic subgroups at
@@ -268,16 +268,16 @@ satisfy the constraint.  The residual can encode any task-space
 equation you can express symbolically: a plane, a rail, an
 orientation lock, a contact constraint, a handover coupling.
 
-All five demos live in `examples/constrained_planning/` and share a
+All five demos live in `examples/planning/constrained/` and share a
 tiny scaffold (`_shared.py`) so each file only contains the one
 interesting line: the residual itself.  Run any of them with:
 
 ```bash
-pixi run -e dev python examples/constrained_planning/plane.py
-pixi run -e dev python examples/constrained_planning/plane_with_obstacle.py
-pixi run -e dev python examples/constrained_planning/line_horizontal.py
-pixi run -e dev python examples/constrained_planning/line_vertical.py
-pixi run -e dev python examples/constrained_planning/orientation_lock.py
+pixi run -e dev python examples/planning/constrained/plane.py
+pixi run -e dev python examples/planning/constrained/plane_with_obstacle.py
+pixi run -e dev python examples/planning/constrained/line_horizontal.py
+pixi run -e dev python examples/planning/constrained/line_vertical.py
+pixi run -e dev python examples/planning/constrained/orientation_lock.py
 ```
 
 ### Plane constraint

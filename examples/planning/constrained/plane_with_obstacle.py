@@ -11,7 +11,7 @@ The plane shows up as a translucent blue plate, the obstacle as a
 translucent red sphere, and the sphere is also discretised into a
 volumetric point cloud so VAMP's SIMD collision checker sees it.
 
-    pixi run python examples/constrained_planning/plane_with_obstacle.py
+    pixi run python examples/planning/constrained/plane_with_obstacle.py
 """
 
 import numpy as np

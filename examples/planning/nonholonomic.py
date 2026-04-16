@@ -19,8 +19,8 @@ Key whole-body motions (base + arm change simultaneously):
 
 Usage::
 
-    pixi run python examples/nonholonomic_demo.py
-    pixi run python examples/nonholonomic_demo.py --nav_time=0.05
+    pixi run python examples/planning/nonholonomic.py
+    pixi run python examples/planning/nonholonomic.py --nav_time=0.05
 """
 
 from __future__ import annotations

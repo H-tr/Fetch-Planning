@@ -1,6 +1,6 @@
 """TRAC-IK stress test with PyBullet visualization.
 
-Same target poses as constrained_ik_example_vis.py but using the
+Same target poses as ik/constrained_vis.py but using the
 unconstrained TRAC-IK backend — no CoM stability, no collision
 avoidance.
 
@@ -9,7 +9,7 @@ Controls:
     q — quit
 
 Usage:
-    python examples/trac_ik_example_vis.py
+    python examples/ik/trac_ik_vis.py
 """
 
 import time

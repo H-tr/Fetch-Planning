@@ -42,7 +42,7 @@ from fire import Fire
 
 # Reach into examples/ so we can borrow helpers like ``load_table``.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_REPO_ROOT / "examples"))
+sys.path.insert(0, str(_REPO_ROOT / "examples" / "planning"))
 
 from fetch_planning.config.robot_config import (  # noqa: E402
     HOME_JOINTS,
@@ -73,7 +73,7 @@ SUBGROUP = "fetch_arm"
 # Rotation-reference link for the constraint residuals (gripper_link
 # is the rigid gripper body frame).  For translation constraints we use
 # the symmetric midpoint between the two finger links — see
-# ``ee_translation`` / ``ee_position`` in examples/constrained_planning/_shared.py
+# ``ee_translation`` / ``ee_position`` in examples/planning/constrained/_shared.py
 # for the rationale.
 EE_LINK = "gripper_link"
 LEFT_FINGER_LINK = "l_gripper_finger_link"
@@ -345,7 +345,7 @@ def record_pink_ik(out: Path) -> None:
 
 
 def record_motion_planning(out: Path) -> None:
-    from motion_planning_example import load_table  # noqa: WPS433 (local import)
+    from motion import load_table  # noqa: WPS433 (local import)
 
     env = _make_env()
     cloud = load_table()
@@ -558,7 +558,7 @@ def record_constrained_plane(out: Path) -> None:
 
 
 def record_constrained_plane_obstacle(out: Path) -> None:
-    # Same seed & geometry as examples/constrained_planning/plane_with_obstacle.py
+    # Same seed & geometry as examples/planning/constrained/plane_with_obstacle.py
     # Tuned so the TCP sweeps several tens of cm on the manifold and
     # the obstacle sits cleanly on the direct path.
     _GOAL_SEED = np.array([0.95, -0.882, -0.881, 1.593, 0.209, 0.082, -0.418])

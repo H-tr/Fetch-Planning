@@ -31,4 +31,4 @@ pixi run foam-build
 
 echo ""
 echo "=== Setup complete ==="
-echo "Run examples with:  pixi run python examples/motion_planning_example.py"
+echo "Run examples with:  pixi run python examples/planning/motion.py"

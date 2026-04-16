@@ -11,7 +11,7 @@ elbow and wrist while the gripper pose stays glued to the manifold.
 
 A bold green cylinder marks the rail.
 
-    pixi run python examples/constrained_planning/line_horizontal.py
+    pixi run python examples/planning/constrained/line_horizontal.py
 """
 
 import casadi as ca

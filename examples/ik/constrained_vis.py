@@ -1,6 +1,6 @@
 """Pink IK stress test with PyBullet visualization.
 
-Same target poses as trac_ik_example_vis.py but using the Pink
+Same target poses as ik/trac_ik_vis.py but using the Pink
 constrained backend — with CoM stability.
 
 Controls:
@@ -8,7 +8,7 @@ Controls:
     q — quit
 
 Usage:
-    python examples/constrained_ik_example_vis.py
+    python examples/ik/constrained_vis.py
 """
 
 import time

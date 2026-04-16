@@ -10,7 +10,7 @@ arm, leaving a 2-D null space for the planner to exploit.
 
 A bold yellow cylinder marks the rail.
 
-    pixi run python examples/constrained_planning/line_vertical.py
+    pixi run python examples/planning/constrained/line_vertical.py
 """
 
 import casadi as ca
