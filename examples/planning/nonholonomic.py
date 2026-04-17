@@ -102,13 +102,14 @@ PLACE2_GRASP = np.array([0.33615000, 0.03522638, 1.06906802, 1.89672008,
 # ── Planning parameters ──────────────────────────────────────────────
 
 # NAV_TIME is the per-call time budget for the whole-body multilevel
-# planner.  500 ms succeeds ~80% on the harder ~6 m navigation legs
-# (e.g. far-table → mid-room) — QRRTStar is asymptotically optimal,
-# so the variance is mostly in *how good* a path it finds, but very
-# tight budgets occasionally fail outright.  1.0 s gets the success
-# rate up to ~99% on the same legs without making the demo feel slow.
+# planner.  The solver returns as soon as the top level has an exact
+# solution (see ``plan_multilevel`` in ext/ompl_vamp/planner.hpp), so
+# this is an *upper bound*, not a fixed spend — typical legs complete
+# in single-digit ms.  The ceiling exists for the flaky carry-with-
+# extended-arm legs where the fiber-bundle lift occasionally needs
+# more samples.
 # Override with --nav_time=… on the command line.
-NAV_TIME = 1.0
+NAV_TIME = 0.5
 ARM_TIME = 1.0
 TUCK_ARM = HOME_JOINTS[3:].copy()
 BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
@@ -287,9 +288,8 @@ def main(
 ) -> None:
     print("=" * 65)
     print("  Whole-Body Multilevel Motion Planning Demo")
-    print("  11 DOF: RS -> Compound(RS + R^8)  (OMPL fiber bundles)")
-    print(f"  Planner: QRRTStar (from '{nav_planner}')  |  Budget: {nav_time * 1000:.0f} ms")
-    print("  Reeds-Shepp base + reverse penalty + asymp. optimal rewiring")
+    print("  11 DOF: SE(2) -> Compound(SE(2) + R^8)  (OMPL fiber bundles)")
+    print(f"  Planner: QRRT (from '{nav_planner}')  |  Budget: {nav_time * 1000:.0f} ms")
     print("=" * 65)
 
     env = PyBulletEnv(fetch_robot_config, visualize=visualize)

@@ -7,7 +7,6 @@ type checkers can resolve ``import fetch_planning._ompl_vamp``.
 """
 
 from collections.abc import Sequence
-from typing import overload
 
 class PlanResult:
     """Result of a single ``OmplVampPlanner.plan`` call."""
@@ -49,23 +48,28 @@ class OmplVampPlanner:
       in the 24-DOF body on every state and motion validity query.
     """
 
-    @overload
-    def __init__(self) -> None:
-        """Create a full-body planner (24 DOF)."""
-        ...
-    @overload
     def __init__(
         self,
         active_indices: Sequence[int],
         frozen_config: Sequence[float],
+        base_dim: int = 0,
+        turning_radius: float = 0.2,
+        allow_reverse: bool = False,
     ) -> None:
         """Create a subgroup planner.
 
         Args:
-            active_indices: Positions in the full 24-DOF body that this
+            active_indices: Positions in the full-body config that this
                 planner will plan over, in DOF order.
-            frozen_config: 24-DOF stance to inject for every joint *not*
+            frozen_config: Full-body stance to inject for every joint *not*
                 in ``active_indices``.
+            base_dim: How many leading active indices form the
+                nonholonomic base (0 = arm-only, 3 = SE2 base).
+            turning_radius: Minimum turning radius in metres (ignored
+                when ``base_dim == 0``).
+            allow_reverse: Select the SE(2) base state space.  ``False``
+                (default) picks ``DubinsStateSpace`` (forward-only); ``True``
+                picks ``ReedsSheppStateSpace`` (reverse permitted).
         """
         ...
     def add_pointcloud(

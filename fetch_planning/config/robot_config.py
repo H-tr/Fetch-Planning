@@ -6,10 +6,9 @@ The full configuration vector is 11-DOF:
     [4:11]  7-DOF arm (shoulder_pan → wrist_roll)
 
 The base is nonholonomic. When base joints are active, the planner uses OMPL
-multilevel planning (fiber bundles) with a hierarchy RS → RS × R^N, where RS
-is a ReedsSheppStateSpace with a reverse-segment penalty. Tree extension and
-tree-rewire both use Reeds-Shepp curves, and the default multilevel planner
-is QRRTStar so the reverse penalty enters the asymptotic path-cost objective.
+multilevel planning (fiber bundles) with a hierarchy SE2 → SE2 × R^N.  The
+SE(2) space is either ``DubinsStateSpace`` (forward-only, default) or
+``ReedsSheppStateSpace`` (reverse allowed), selected by ``BASE_REVERSE_ENABLE``.
 When only arm joints are active, a plain RealVectorStateSpace is used.
 """
 
@@ -57,14 +56,19 @@ CHAIN_CONFIGS: dict[str, ChainConfig] = {
     ),
 }
 
-# Reeds-Shepp base parameters.
+# Base curve parameters.
 # turning_radius ≈ 0.2 m is a soft compromise for Fetch's diff-drive base
 # (real minimum is ~0 since it can rotate in place, but small non-zero
-# keeps the RS curves smooth for the planner and visualization).
-# reverse_penalty multiplies the cost of reverse segments; it only bites
-# when using an asymptotically optimal planner (QRRTStar by default).
+# keeps the curves smooth for the planner and visualization).
+# BASE_REVERSE_ENABLE selects the SE(2) base state space:
+#   False (default) — DubinsStateSpace, forward-only curves; the robot
+#     never reverses.  Matches "reverse only when necessary" with the
+#     necessary set being empty — suitable for open indoor spaces.
+#   True  — ReedsSheppStateSpace, unpenalized shortest-of-48 curves,
+#     may use reverse when it's geometrically shorter.  Enable when the
+#     task legitimately requires backing up (tight parking, dead-ends).
 BASE_TURNING_RADIUS: float = 0.2
-BASE_REVERSE_PENALTY: float = 20.0
+BASE_REVERSE_ENABLE: bool = True
 
 VIZ_URDF_PATH = os.path.join(_RESOURCES_DIR, "fetch.urdf")
 

@@ -11,11 +11,11 @@
  * the base in isolation; the upper level adds the arm as the fiber,
  * lifting the base path into the full configuration space.
  *
- * The base state space is ``PenalizedReedsSheppStateSpace`` — a
- * ReedsSheppStateSpace with a multiplicative penalty on reverse
- * segments that shows up in the path cost, so asymptotically optimal
- * planners (QRRTStar, RRTstar, BITstar) actively steer away from
- * backing up.
+ * The base state space is selected by the ``allow_reverse`` flag:
+ * ``ReedsSheppStateSpace`` (shortest-of-48 curves, may include reverse)
+ * when reverse is allowed, else ``DubinsStateSpace`` (forward-only, 6
+ * curve families).  Dubins is the default — it structurally forbids
+ * reverse motion, eliminating the need for any reverse-cost penalty.
  *
  * When the subgroup is arm-only, the planner uses a standard OMPL
  * geometric SimpleSetup with a RealVectorStateSpace (optionally
@@ -28,9 +28,11 @@
 #include <ompl/base/ConstrainedSpaceInformation.h>
 #include <ompl/base/Constraint.h>
 #include <ompl/base/OptimizationObjective.h>
+#include <ompl/base/PlannerTerminationCondition.h>
 #include <ompl/base/SpaceInformation.h>
 #include <ompl/base/StateSpace.h>
 #include <ompl/base/objectives/PathLengthOptimizationObjective.h>
+#include <ompl/base/spaces/DubinsStateSpace.h>
 #include <ompl/base/spaces/RealVectorStateSpace.h>
 #include <ompl/base/spaces/ReedsSheppStateSpace.h>
 #include <ompl/base/spaces/SE2StateSpace.h>
@@ -48,6 +50,7 @@
 
 #include "compiled_constraint.hpp"
 #include "compiled_cost.hpp"
+#include "plan_decomposed.hpp"
 #include "validity.hpp"
 // OMPL — informed trees
 #include <ompl/geometric/planners/informedtrees/ABITstar.h>
@@ -105,48 +108,37 @@ namespace fetch_planning {
 namespace og = ompl::geometric;
 namespace om = ompl::multilevel;
 
-/// ReedsSheppStateSpace whose distance() penalises reverse segments.
+/// Build the SE(2) base state space used by the multilevel planner.
 ///
-/// The standard RS distance is ``rho * sum(|seg_i|)``.  This subclass
-/// returns ``rho * sum(w_i * |seg_i|)`` with ``w_i = reverse_penalty``
-/// for negative-length (reverse) segments and ``w_i = 1`` otherwise.
+/// * ``allow_reverse = false`` (default) — ``DubinsStateSpace`` with
+///   asymmetric distance.  Every tree extension uses a forward-only
+///   curve; the planner cannot produce reverse motion, so no penalty
+///   is required anywhere downstream.
+/// * ``allow_reverse = true`` — ``ReedsSheppStateSpace``.  Curves are
+///   the unpenalized shortest-of-48 RS paths, which may include reverse
+///   when it is geometrically shorter.
 ///
-/// Effect:
-/// * nearest-neighbor picks nodes that can be reached with less reverse
-/// * for asymptotically optimal planners (QRRTStar / RRTstar), the path
-///   cost includes the penalty, so rewiring prefers forward paths
-///
-/// The underlying interpolate() still traces the shortest RS curve,
-/// so the optimiser is what actually drives reverse out of the result.
-class PenalizedReedsSheppStateSpace : public ob::ReedsSheppStateSpace {
- public:
-  PenalizedReedsSheppStateSpace(double turning_radius, double reverse_penalty)
-      : ob::ReedsSheppStateSpace(turning_radius),
-        reverse_penalty_(reverse_penalty) {}
-
-  double distance(const ob::State *s1, const ob::State *s2) const override {
-    auto path = getPath(s1, s2);
-    double cost = 0.0;
-    for (int i = 0; i < 5; ++i) {
-      double seg = std::fabs(path.length_[i]);
-      cost += (path.length_[i] < 0.0 ? reverse_penalty_ : 1.0) * seg;
-    }
-    return rho_ * cost;
+/// Both spaces store states in ``SE2StateSpace::StateType`` layout, so
+/// downstream validators and the manual projection below can treat the
+/// return value polymorphically via ``SE2StateSpace`` casts.
+inline auto make_se2_base_space(double turning_radius, bool allow_reverse)
+    -> std::shared_ptr<ob::SE2StateSpace> {
+  if (allow_reverse) {
+    return std::make_shared<ob::ReedsSheppStateSpace>(turning_radius);
   }
+  return std::make_shared<ob::DubinsStateSpace>(turning_radius,
+                                                /*isSymmetric=*/false);
+}
 
- private:
-  double reverse_penalty_;
-};
-
-// Projection for the multilevel hierarchy Compound(RS + R^N) → RS.
+// Projection for the multilevel hierarchy Compound(SE2 + R^N) → SE2.
 //
-// OMPL's ProjectionFactory only auto-detects SE2-tagged spaces; our
-// PenalizedReedsSheppStateSpace carries STATE_SPACE_REEDS_SHEPP so the
-// factory cannot build the projection itself.  However, the state
-// layout of ReedsSheppStateSpace is identical to SE2StateSpace (it is a
-// subclass), so OMPL's own Projection_SE2RN_SE2 works correctly when
-// constructed manually — its project/lift only use
-// ``SE2StateSpace::StateType`` casts, never the type tag.
+// OMPL's ProjectionFactory only auto-detects plain SE2 — the RS/Dubins
+// spaces carry STATE_SPACE_REEDS_SHEPP / STATE_SPACE_DUBINS tags so the
+// factory refuses to build the projection.  Both subclasses inherit from
+// SE2StateSpace with the same state layout, so OMPL's own
+// Projection_SE2RN_SE2 works correctly when constructed manually — its
+// project/lift only use ``SE2StateSpace::StateType`` casts, never the
+// type tag.
 
 struct PlanResult {
   bool solved;
@@ -168,22 +160,23 @@ class OmplVampPlanner {
   ///     When > 0, the planner uses OMPL multilevel planning with a
   ///     hierarchy RS → RS × R^N.  When 0, a standard geometric
   ///     planner on RealVectorStateSpace is used.
-  /// @param turning_radius  Reeds-Shepp minimum turning radius (m).
-  ///     Ignored when base_dim == 0.
-  /// @param reverse_penalty  Multiplicative cost on reverse RS segments.
-  ///     1.0 = no penalty; >1.0 = discourage backing up.  Only
-  ///     effective with asymptotically optimal planners (QRRTStar,
-  ///     RRTstar, BITstar) that minimise path cost during planning.
+  /// @param turning_radius  Minimum turning radius (m).  Ignored when
+  ///     base_dim == 0.
+  /// @param allow_reverse  Select the SE(2) base state space.  When
+  ///     false (default), uses ``DubinsStateSpace`` (forward-only
+  ///     curves, no reverse ever).  When true, uses
+  ///     ``ReedsSheppStateSpace`` (shortest-of-48 curves, reverse
+  ///     allowed when geometrically shorter).
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config,
                   int base_dim = 0,
                   double turning_radius = 0.2,
-                  double reverse_penalty = 1.0)
+                  bool allow_reverse = false)
       : active_dim_(static_cast<int>(active_indices.size())),
         active_indices_(std::move(active_indices)),
         base_dim_(base_dim),
         turning_radius_(turning_radius),
-        reverse_penalty_(reverse_penalty) {
+        allow_reverse_(allow_reverse) {
     frozen_config_.resize(frozen_config.size());
     for (std::size_t i = 0; i < frozen_config.size(); ++i)
       frozen_config_[i] = static_cast<float>(frozen_config[i]);
@@ -270,11 +263,9 @@ class OmplVampPlanner {
   // planner falls back to OMPL's default path-length objective.
   //
   // For multilevel plans the cost objective is set on the top
-  // SpaceInformation's ProblemDefinition.  The
-  // ``PenalizedReedsSheppStateSpace::distance()`` reverse-segment
-  // penalty lives in the *state-space distance*, not in this
-  // objective, so user costs are added on top — the non-holonomic
-  // shaping is preserved.
+  // SpaceInformation's ProblemDefinition, added on top of the base
+  // path-length term so the non-holonomic distance metric still
+  // contributes to motionCost.
   //
   // Multiple costs are summed via MultiOptimizationObjective with
   // the weights supplied at add time.
@@ -312,6 +303,10 @@ class OmplVampPlanner {
             "Constrained planning is not supported for subgroups that "
             "include mobile-base joints.  Use an arm-only subgroup for "
             "constrained planning.");
+      }
+      if (planner_name == "decomposed") {
+        return plan_decomposed_wrapper(start, goal, time_limit, simplify,
+                                       interpolate);
       }
       return plan_multilevel(start, goal, planner_name, time_limit, simplify,
                              interpolate);
@@ -379,7 +374,7 @@ class OmplVampPlanner {
   bool has_base_ = false;
   bool base_only_ = false;
   double turning_radius_;
-  double reverse_penalty_;
+  bool allow_reverse_;
 
   double base_x_lo_ = -10.0;
   double base_x_hi_ = 10.0;
@@ -412,25 +407,24 @@ class OmplVampPlanner {
     auto hi_arr = hi.to_array();
 
     if (has_base_) {
-      // ReedsSheppStateSpace with reverse penalty — so that both
-      // distance/interpolation give non-holonomic car-like curves and
-      // the reverse penalty shows up in the path cost minimised by
-      // asymptotically optimal planners.
-      auto se2 = std::make_shared<PenalizedReedsSheppStateSpace>(
-          turning_radius_, reverse_penalty_);
+      // SE(2) base space — Dubins (forward-only) or Reeds-Shepp
+      // (reverse allowed), selected by ``allow_reverse_``.  Both provide
+      // non-holonomic car-like distance() + interpolate() semantics; the
+      // distinction is whether reverse segments are admissible.
+      auto se2 = make_se2_base_space(turning_radius_, allow_reverse_);
       ob::RealVectorBounds se2_bounds(2);
       se2_bounds.setLow(0, base_x_lo_);
       se2_bounds.setHigh(0, base_x_hi_);
       se2_bounds.setLow(1, base_y_lo_);
       se2_bounds.setHigh(1, base_y_hi_);
       se2->setBounds(se2_bounds);
-      // Reeds-Shepp curves are longer than straight lines, so the
-      // default 1%-of-maxextent segment fraction produces extremely
-      // fine subdivision (thousands of collision checks per edge) and
-      // the motion validator can spend seconds inside a single edge
-      // without returning to check the planner-termination condition.
-      // 2% keeps checks fine enough to catch obstacles on a 0.2 m
-      // turning radius while letting the planner breathe.
+      // Car-like curves are longer than straight lines, so the default
+      // 1%-of-maxextent segment fraction produces extremely fine
+      // subdivision (thousands of collision checks per edge) and the
+      // motion validator can spend seconds inside a single edge without
+      // returning to check the planner-termination condition.  2% keeps
+      // checks fine enough to catch obstacles on a 0.2 m turning radius
+      // while letting the planner breathe.
       se2->setLongestValidSegmentFraction(0.02);
 
       const int arm_active_dim = active_dim_ - base_dim_;
@@ -539,28 +533,27 @@ class OmplVampPlanner {
                        const std::string &planner_name, double time_limit,
                        bool simplify, bool interpolate) -> PlanResult {
     // Build a 2-level hierarchy:
-    //   Level 0: Reeds-Shepp (base pose, non-holonomic)
-    //   Level 1: Compound(Reeds-Shepp + R^N) (full active space)
+    //   Level 0: SE(2) (base pose, non-holonomic — Dubins or Reeds-Shepp)
+    //   Level 1: Compound(SE(2) + R^N) (full active space)
     // OMPL's ProjectionFactory cannot auto-detect this mapping because
-    // our ReedsShepp subclass carries STATE_SPACE_REEDS_SHEPP rather
-    // than STATE_SPACE_SE2.  We supply a custom projection that works
-    // directly on the state layout.
+    // the base subclass carries STATE_SPACE_DUBINS / STATE_SPACE_REEDS_SHEPP
+    // rather than STATE_SPACE_SE2.  We supply a custom projection that
+    // works directly on the state layout (all three share SE2 storage).
     std::vector<ob::SpaceInformationPtr> si_vec;
     std::vector<om::ProjectionPtr> proj_vec;
 
-    // Level 0: Reeds-Shepp ────────────────────────────────────────────
-    auto level0_rs = std::make_shared<PenalizedReedsSheppStateSpace>(
-        turning_radius_, reverse_penalty_);
+    // Level 0: SE(2) base ────────────────────────────────────────────
+    auto level0_se2 = make_se2_base_space(turning_radius_, allow_reverse_);
     {
       ob::RealVectorBounds bnd(2);
       bnd.setLow(0, base_x_lo_);
       bnd.setHigh(0, base_x_hi_);
       bnd.setLow(1, base_y_lo_);
       bnd.setHigh(1, base_y_hi_);
-      level0_rs->setBounds(bnd);
-      level0_rs->setLongestValidSegmentFraction(0.02);
+      level0_se2->setBounds(bnd);
+      level0_se2->setLongestValidSegmentFraction(0.02);
 
-      auto si = std::make_shared<ob::SpaceInformation>(level0_rs);
+      auto si = std::make_shared<ob::SpaceInformation>(level0_se2);
       // Base-only check — a proper relaxation of the full-body check,
       // using the dedicated FetchBase VAMP model (3 DOF, 14 spheres).
       // Any pose valid at the top level projects to a base-
@@ -572,7 +565,7 @@ class OmplVampPlanner {
       si_vec.push_back(si);
     }
 
-    // Level 1: Compound(RS + R^N)  (only when arm joints are active) ──
+    // Level 1: Compound(SE(2) + R^N)  (only when arm joints are active) ──
     if (!base_only_) {
       auto si = std::make_shared<ob::SpaceInformation>(space_);
       si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
@@ -581,12 +574,13 @@ class OmplVampPlanner {
       si->setup();
       si_vec.push_back(si);
 
-      // OMPL's own Projection_SE2RN_SE2 works here because
-      // ReedsSheppStateSpace inherits from SE2StateSpace (same state
-      // layout).  The ProjectionFactory can't auto-pick it since our
-      // space's type tag is STATE_SPACE_REEDS_SHEPP, but constructing
+      // OMPL's own Projection_SE2RN_SE2 works here because both
+      // ReedsSheppStateSpace and DubinsStateSpace inherit from
+      // SE2StateSpace (same state layout).  The ProjectionFactory
+      // can't auto-pick it since the concrete space's type tag is
+      // STATE_SPACE_REEDS_SHEPP / STATE_SPACE_DUBINS, but constructing
       // it manually bypasses that check.
-      auto proj = std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_rs);
+      auto proj = std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_se2);
       // Eagerly initialise the fiber space (sampler + scratch state),
       // which the framework relies on for lifting.
       proj->makeFiberSpace();
@@ -604,10 +598,10 @@ class OmplVampPlanner {
     write_scoped_state(ompl_goal, goal);
     pdef->setStartAndGoalStates(ompl_start, ompl_goal);
 
-    // Soft costs are integrated by QRRTStar/RRTstar/BIT* family.  The
-    // ``PenalizedReedsSheppStateSpace::distance()`` reverse penalty
-    // lives in the state-space distance, not in this objective, so
-    // adding a cost here does NOT replace the non-holonomic shaping.
+    // Soft costs are integrated by QRRTStar/RRTstar/BIT* family on top
+    // of the base SE(2) distance.  No reverse penalty lives in the
+    // distance metric — forward-only behavior comes from the curve
+    // selection (Dubins) rather than from a cost weighting.
     if (!cost_libs_.empty()) {
       pdef->setOptimizationObjective(
           build_objective(top_si, /*active_top=*/true));
@@ -617,8 +611,18 @@ class OmplVampPlanner {
     planner->setup();
 
     // Solve ────────────────────────────────────────────────────────────
+    // The multilevel framework only early-exits on non-final levels
+    // (BundleSpaceSequenceImpl.h: `foundKLevelSolution_ && k < size - 1`),
+    // so the top level runs to the full time budget even after an exact
+    // solution exists.  For feasibility planners like QRRT that don't
+    // refine, that's pure waste.  Combine the time budget with an
+    // exact-solution PTC so we return as soon as the top level has a
+    // solution.
+    auto ptc_time = ob::timedPlannerTerminationCondition(time_limit);
+    auto ptc_soln = ob::exactSolnPlannerTerminationCondition(pdef);
+    auto ptc = ob::plannerOrTerminationCondition(ptc_time, ptc_soln);
     auto t0 = std::chrono::steady_clock::now();
-    auto status = planner->ob::Planner::solve(time_limit);
+    auto status = planner->solve(ptc);
     auto t1 = std::chrono::steady_clock::now();
     auto elapsed_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
@@ -644,6 +648,40 @@ class OmplVampPlanner {
       result.path_cost = std::numeric_limits<double>::infinity();
     }
     return result;
+  }
+
+  // ── Decomposed planning (base roadmap + layered arm scheduler) ────
+  //
+  // Adapter around ``plan_decomposed`` (plan_decomposed.hpp).  The
+  // decomposed planner already returns a ready-to-use sequence of
+  // active-subgroup configurations sampled at the base-resample
+  // density, so ``simplify`` / ``interpolate`` are no-ops here — the
+  // path is already dense in the 11-D active space.  (If callers ever
+  // want to trim waypoints, shortcut-smoothing should run on the
+  // reconstructed PathGeometric, not on the layered DAG output, so we
+  // leave that for a follow-up.)
+
+  auto plan_decomposed_wrapper(const std::vector<double> &start,
+                               const std::vector<double> &goal,
+                               double time_limit, bool /*simplify*/,
+                               bool /*interpolate*/) -> PlanResult {
+    std::array<double, 4> base_xy_bounds{base_x_lo_, base_x_hi_, base_y_lo_,
+                                         base_y_hi_};
+    DecomposedConfig cfg{};
+    auto r = plan_decomposed(allow_reverse_, turning_radius_, base_xy_bounds,
+                             start, goal, active_indices_, frozen_config_,
+                             base_dim_, active_dim_, env_, time_limit, cfg);
+
+    PlanResult out;
+    out.solved = r.solved;
+    out.planning_time_ns = r.planning_time_ns;
+    if (r.solved) {
+      out.path = std::move(r.path);
+      out.path_cost = r.path_cost;
+    } else {
+      out.path_cost = std::numeric_limits<double>::infinity();
+    }
+    return out;
   }
 
   // ── Geometric planning (arm-only subgroups, with constraints) ─────
@@ -774,12 +812,11 @@ class OmplVampPlanner {
   // the thin adapter is rebuilt per plan() call.
   //
   // For base-including subgroups we ALWAYS keep a path-length term as
-  // the baseline, so the ``PenalizedReedsSheppStateSpace::distance()``
-  // reverse penalty stays inside the optimisation objective that
-  // QRRTStar / RRT* rewires against.  Without this, a CompiledCost
-  // would silently shadow the RS distance contribution to motionCost
-  // and the non-holonomic shaping would only affect nearest-neighbour
-  // selection, not rewiring decisions.
+  // the baseline so the SE(2) distance contribution (Dubins / RS) stays
+  // inside the optimisation objective QRRTStar / RRT* rewires against.
+  // Without this, a CompiledCost would silently shadow the car-like
+  // distance in motionCost and the non-holonomic shaping would only
+  // affect nearest-neighbour selection, not rewiring decisions.
   auto build_objective(const ob::SpaceInformationPtr &si, bool active_top) const
       -> std::shared_ptr<ob::OptimizationObjective> {
     const CompiledCost::Layout layout =
@@ -797,9 +834,9 @@ class OmplVampPlanner {
 
     auto multi = std::make_shared<ob::MultiOptimizationObjective>(si);
     if (keep_path_length) {
-      // Path-length objective integrates ob::motionCost via
-      // distance(), which for our PenalizedReedsSheppStateSpace
-      // already includes the reverse-segment penalty.
+      // Path-length objective integrates ob::motionCost via the SE(2)
+      // distance — forward-only Dubins length or Reeds-Shepp length,
+      // depending on ``allow_reverse_``.
       multi->addObjective(
           std::make_shared<ob::PathLengthOptimizationObjective>(si), 1.0);
     }

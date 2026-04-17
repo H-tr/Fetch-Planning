@@ -35,22 +35,23 @@ NB_MODULE(_ompl_vamp, m) {
       .def_ro("path_cost", &PlanResult::path_cost);
 
   nb::class_<OmplVampPlanner>(m, "OmplVampPlanner")
-      .def(nb::init<std::vector<int>, std::vector<double>, int, double, double>(),
+      .def(nb::init<std::vector<int>, std::vector<double>, int, double, bool>(),
            "Create a planner.\n\n"
            "active_indices: joints this planner controls.\n"
            "frozen_config: full-body config for inactive joints.\n"
            "base_dim: how many leading active indices form the "
            "nonholonomic base (0 = arm-only, 3 = SE2 base).\n"
-           "turning_radius: Reeds-Shepp minimum turning radius (m).\n"
-           "reverse_penalty: multiplicative cost on reverse RS segments "
-           "(1.0 = none; >1.0 = discourage backing up; only bites for "
-           "asymptotically optimal planners).\n"
+           "turning_radius: minimum turning radius (m).\n"
+           "allow_reverse: when false (default) the SE(2) base space is "
+           "DubinsStateSpace (forward-only curves, no reverse motion "
+           "ever).  When true, uses ReedsSheppStateSpace (shortest-of-48 "
+           "curves, reverse allowed when geometrically shorter).\n"
            "When base_dim > 0, uses multilevel planning "
-           "(RS -> RS x R^N) via OMPL fiber bundles.",
+           "(SE2 -> SE2 x R^N) via OMPL fiber bundles.",
            nb::arg("active_indices"), nb::arg("frozen_config"),
            nb::arg("base_dim") = 0,
            nb::arg("turning_radius") = 0.2,
-           nb::arg("reverse_penalty") = 1.0)
+           nb::arg("allow_reverse") = false)
       .def("set_base_bounds", &OmplVampPlanner::set_base_bounds,
            nb::arg("x_lo"), nb::arg("x_hi"), nb::arg("y_lo"), nb::arg("y_hi"),
            nb::arg("theta_lo") = -M_PI, nb::arg("theta_hi") = M_PI)

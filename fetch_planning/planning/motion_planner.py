@@ -73,7 +73,7 @@ class MotionPlanner:
     ) -> None:
         from fetch_planning._ompl_vamp import OmplVampPlanner
         from fetch_planning.config.robot_config import (
-            BASE_REVERSE_PENALTY,
+            BASE_REVERSE_ENABLE,
             BASE_TURNING_RADIUS,
             HOME_JOINTS,
             JOINT_GROUPS,
@@ -136,7 +136,7 @@ class MotionPlanner:
             self._base_config.tolist(),
             base_dim,
             BASE_TURNING_RADIUS,
-            BASE_REVERSE_PENALTY,
+            BASE_REVERSE_ENABLE,
         )
         self._joint_names = list(sg_joint_names)
         if set(active_indices) == set(range(len(full_names))):
@@ -264,10 +264,9 @@ class MotionPlanner:
         Costs are soft per-state terms that shape the solution returned
         by asymptotically-optimal planners (``rrtstar``, ``bitstar``,
         ``qrrtstar``, …).  For whole-body subgroups (``fetch_whole_body``,
-        ``fetch_base_arm``) the default multilevel planner is QRRTStar,
-        which already minimises the ``PenalizedReedsSheppStateSpace``
-        distance — user costs are added on top of that penalty, so the
-        non-holonomic reverse discouragement is preserved.
+        ``fetch_base_arm``) the multilevel backend keeps the SE(2)
+        path-length term (Dubins or Reeds-Shepp, per ``BASE_REVERSE_ENABLE``)
+        alongside the user cost, so the non-holonomic shaping is preserved.
         """
         from fetch_planning.planning.costs import Cost
 

@@ -15,11 +15,10 @@ per-state cost along each edge, which is the standard soft-cost
 treatment for RRT*-family planners.
 
 For whole-body / base-including subgroups the planner uses OMPL
-multilevel planning with a ``PenalizedReedsSheppStateSpace`` whose
-``distance()`` already carries a reverse-segment penalty.  Custom
-costs are *added* to that objective — the two mechanisms are
-orthogonal, so nothing here overrides the non-holonomic reverse
-penalty.
+multilevel planning with a car-like SE(2) base space (Dubins or
+Reeds-Shepp).  Custom costs are *added* on top of the default
+path-length objective — they augment the non-holonomic distance, they
+do not replace it.
 
 The design intentionally mirrors
 :class:`fetch_planning.planning.constraints.Constraint`: same

@@ -16,9 +16,9 @@
  * BIT*, AIT*, and the multilevel QRRT*.
  *
  * For whole-body / base-including subgroups the planner combines this
- * user-supplied objective on top of the ``PenalizedReedsSheppStateSpace``
- * distance penalty, so the non-holonomic reverse shaping is preserved
- * — CompiledCost is additive, not a replacement for the base objective.
+ * user-supplied objective on top of the base SE(2) path-length
+ * (Dubins or Reeds-Shepp) — CompiledCost is additive, not a
+ * replacement for the base objective.
  *
  * The dlopen'd handle and scratch buffers are owned by
  * ``CostLibrary`` so that the thin ``CompiledCost`` wrapper can be
@@ -141,8 +141,8 @@ class CostLibrary {
 ///
 /// The state layout is one of three:
 ///   * ``kPlain``    — RealVectorStateSpace(active_dim) (arm-only).
-///   * ``kSE2Only``  — SE2/ReedsShepp state (base-only subgroups).
-///   * ``kCompound`` — CompoundStateSpace(SE2/RS + RealVector) for
+///   * ``kSE2Only``  — SE(2) state (Dubins or RS, base-only subgroups).
+///   * ``kCompound`` — CompoundStateSpace(SE(2) + RealVector) for
 ///                     subgroups that include the base AND arm joints,
 ///                     including the multilevel "top" space.
 /// The Cost CasADi expression is always written against the planner's

@@ -80,6 +80,9 @@ class PlannerConfig:
             "sbl",
             "stride",
             "pdst",
+            # Decomposed (base roadmap + layered arm scheduler); only
+            # meaningful for subgroups that include the mobile base.
+            "decomposed",
         )
         if self.planner_name not in valid_planners:
             raise ValueError(

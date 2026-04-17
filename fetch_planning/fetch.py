@@ -23,7 +23,7 @@ to OMPL multilevel planning (fiber bundles) with the hierarchy
 """
 
 from fetch_planning.config.robot_config import (
-    BASE_REVERSE_PENALTY,
+    BASE_REVERSE_ENABLE,
     BASE_TURNING_RADIUS,
     CHAIN_CONFIGS,
     HOME_JOINTS,
@@ -35,7 +35,7 @@ from fetch_planning.config.robot_config import (
 )
 
 __all__ = [
-    "BASE_REVERSE_PENALTY",
+    "BASE_REVERSE_ENABLE",
     "BASE_TURNING_RADIUS",
     "CHAIN_CONFIGS",
     "HOME_JOINTS",
