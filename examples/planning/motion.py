@@ -18,7 +18,7 @@ import trimesh
 from fire import Fire
 
 import fetch_planning
-from fetch_planning.config.robot_config import HOME_JOINTS, fetch_robot_config
+from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig

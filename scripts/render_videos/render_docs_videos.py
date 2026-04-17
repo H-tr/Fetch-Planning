@@ -44,7 +44,7 @@ from fire import Fire
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "examples" / "planning"))
 
-from fetch_planning.config.robot_config import (  # noqa: E402
+from fetch_planning.fetch import (  # noqa: E402
     HOME_JOINTS,
     JOINT_GROUPS,
     fetch_robot_config,

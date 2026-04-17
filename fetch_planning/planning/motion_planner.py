@@ -11,11 +11,13 @@ Fetch whole-body config before collision checks.
 
 Subgroups that include any of the base joints (``base_x_joint``,
 ``base_y_joint``, ``base_theta_joint``) use OMPL multilevel
-planning (fiber bundles) with a hierarchy ``RS → RS × R^N``
-where RS is a Reeds-Shepp state space with a reverse-segment
-penalty.  Tree extension and rewire use Reeds-Shepp curves
-between samples, and the default multilevel planner is
-QRRTStar so the reverse penalty enters the path-cost objective.
+planning (fiber bundles) with a hierarchy ``SE2 → SE2 × R^N``.
+The SE(2) level is ``DubinsStateSpace`` (forward-only) or
+``ReedsSheppStateSpace`` (reverse allowed), selected by
+``BASE_REVERSE_ENABLE``.  Tree extension and rewire use the
+selected car-like curves between samples, and the default
+multilevel planner is QRRTStar so the nonholonomic distance
+metric enters the path-cost objective.
 
 Arm-only subgroups use standard OMPL geometric planning and
 optionally support CasADi-compiled manifold constraints
@@ -72,7 +74,7 @@ class MotionPlanner:
         costs: list | None = None,
     ) -> None:
         from fetch_planning._ompl_vamp import OmplVampPlanner
-        from fetch_planning.config.robot_config import (
+        from fetch_planning.fetch import (
             BASE_REVERSE_ENABLE,
             BASE_TURNING_RADIUS,
             HOME_JOINTS,
@@ -86,6 +88,8 @@ class MotionPlanner:
 
         self._config = config
         self._robot_name = robot_name
+        self._turning_radius = BASE_TURNING_RADIUS
+        self._allow_reverse = BASE_REVERSE_ENABLE
 
         # Frozen 11-DOF joint values for any joint not controlled by
         # this planner.  Defaults to HOME_JOINTS, but the caller can
@@ -102,34 +106,11 @@ class MotionPlanner:
 
         full_names = fetch_robot_config.joint_names
         base_slice = JOINT_GROUPS["base"]
-        base_indices = set(range(base_slice.start, base_slice.stop))
-        base_joint_names = set(full_names[base_slice])
+        self._base_joint_names = set(full_names[base_slice])
 
-        # Resolve subgroup or whole-body alias.
-        if robot_name in ("fetch", "fetch_whole_body"):
-            sg = PLANNING_SUBGROUPS.get("fetch_whole_body")
-            if sg is None:
-                sg = {"dof": len(full_names), "joints": list(full_names)}
-        else:
-            sg = PLANNING_SUBGROUPS.get(robot_name)
-        if sg is None:
-            raise ValueError(
-                f"Unknown robot name '{robot_name}'. "
-                f"Use one of: {available_robots()}"
-            )
-
-        sg_joint_names = sg["joints"]
-        active_indices = [full_names.index(j) for j in sg_joint_names]
-        self._has_base = any(idx in base_indices for idx in active_indices)
-
-        # Count how many *leading* active indices are base joints.
-        # This is passed to C++ so it knows the ReedsSheppStateSpace
-        # dimension — no hardcoded constant in C++.
-        base_dim = 0
-        if self._has_base:
-            base_dim = sum(
-                1 for j in sg_joint_names if j in base_joint_names
-            )
+        active_indices, base_dim = self._resolve_subgroup(
+            robot_name, full_names, PLANNING_SUBGROUPS
+        )
 
         self._planner = OmplVampPlanner(
             active_indices,
@@ -138,28 +119,62 @@ class MotionPlanner:
             BASE_TURNING_RADIUS,
             BASE_REVERSE_ENABLE,
         )
-        self._joint_names = list(sg_joint_names)
-        if set(active_indices) == set(range(len(full_names))):
-            self._subgroup_indices = None
-        else:
-            self._subgroup_indices = np.array(active_indices)
-
-        self._ndof = self._planner.dimension()
+        self._apply_subgroup_state(full_names, active_indices, base_dim)
 
         if pointcloud is not None:
-            r_min, r_max = self._planner.min_max_radii()
-            self._planner.add_pointcloud(
-                np.asarray(pointcloud, dtype=np.float32).tolist(),
-                r_min,
-                r_max,
-                config.point_radius,
-            )
+            self._add_pointcloud_impl(pointcloud, config.point_radius)
 
         if constraints:
             self._push_constraints(constraints)
 
         if costs:
             self._push_costs(costs)
+
+    # ── Subgroup resolution ───────────────────────────────────────────
+
+    def _resolve_subgroup(
+        self,
+        robot_name: str,
+        full_names: list[str],
+        planning_subgroups: dict,
+    ) -> tuple[list[int], int]:
+        """Translate a subgroup name into (active_indices, base_dim).
+
+        Accepts both the explicit ``"fetch_whole_body"`` name and the
+        shorter alias ``"fetch"`` for the full 11-DOF body.
+        """
+        if robot_name in ("fetch", "fetch_whole_body"):
+            sg = planning_subgroups.get("fetch_whole_body")
+            if sg is None:
+                sg = {"dof": len(full_names), "joints": list(full_names)}
+        else:
+            sg = planning_subgroups.get(robot_name)
+        if sg is None:
+            raise ValueError(
+                f"Unknown robot name '{robot_name}'. "
+                f"Use one of: {available_robots()}"
+            )
+        sg_joint_names = sg["joints"]
+        active_indices = [full_names.index(j) for j in sg_joint_names]
+        base_dim = sum(1 for j in sg_joint_names if j in self._base_joint_names)
+        return active_indices, base_dim
+
+    def _apply_subgroup_state(
+        self,
+        full_names: list[str],
+        active_indices: list[int],
+        base_dim: int,
+    ) -> None:
+        """Update cached Python-side subgroup metadata after a C++ rebuild."""
+        self._has_base = base_dim > 0
+        self._base_dim = base_dim
+        sg_joint_names = [full_names[i] for i in active_indices]
+        self._joint_names = list(sg_joint_names)
+        if set(active_indices) == set(range(len(full_names))):
+            self._subgroup_indices = None
+        else:
+            self._subgroup_indices = np.array(active_indices)
+        self._ndof = self._planner.dimension()
 
     # ── Properties ────────────────────────────────────────────────────
 
@@ -193,10 +208,12 @@ class MotionPlanner:
 
     @property
     def has_base(self) -> bool:
-        """True if any of the mobile base joints (x, y, theta) are active
-        in this planner. When True, the planner uses OMPL multilevel
-        planning with Reeds-Shepp curves (hierarchy RS → RS×R^N) and
-        QRRTStar as the default optimal tree planner."""
+        """True if any of the mobile base joints (x, y, theta) are active.
+
+        When True, the planner uses OMPL multilevel planning with
+        Dubins / Reeds-Shepp curves (hierarchy SE2 → SE2×R^N) and
+        QRRTStar as the default optimal tree planner.
+        """
         return self._has_base
 
     def set_base_bounds(
@@ -301,6 +318,17 @@ class MotionPlanner:
 
     # ── Pointcloud environment ────────────────────────────────────────
 
+    def _add_pointcloud_impl(
+        self, pointcloud: np.ndarray, point_radius: float
+    ) -> None:
+        r_min, r_max = self._planner.min_max_radii()
+        self._planner.add_pointcloud(
+            np.asarray(pointcloud, dtype=np.float32).tolist(),
+            r_min,
+            r_max,
+            point_radius,
+        )
+
     def add_pointcloud(self, pointcloud: np.ndarray) -> None:
         """Add a point cloud to the scene after construction.
 
@@ -312,17 +340,132 @@ class MotionPlanner:
             pointcloud: ``(N, 3)`` array of obstacle positions in world
                 frame.
         """
-        r_min, r_max = self._planner.min_max_radii()
-        self._planner.add_pointcloud(
-            np.asarray(pointcloud, dtype=np.float32).tolist(),
-            r_min,
-            r_max,
-            self._config.point_radius,
-        )
+        self._add_pointcloud_impl(pointcloud, self._config.point_radius)
+
+    def remove_pointcloud(self) -> bool:
+        """Drop the most-recently-added pointcloud.
+
+        Returns ``False`` if there was none registered.
+        """
+        return self._planner.remove_pointcloud()
+
+    @property
+    def has_pointcloud(self) -> bool:
+        """``True`` if a pointcloud is currently registered."""
+        return self._planner.has_pointcloud()
 
     def clear_environment(self) -> None:
         """Drop every registered obstacle (spheres and point clouds)."""
         self._planner.clear_environment()
+
+    # ── Point cloud filtering ────────────────────────────────────────
+
+    def filter_pointcloud(
+        self,
+        pointcloud: np.ndarray,
+        min_dist: float,
+        max_range: float,
+        origin: np.ndarray | list[float],
+        workspace_min: np.ndarray | list[float],
+        workspace_max: np.ndarray | list[float],
+        cull: bool = True,
+    ) -> np.ndarray:
+        """Spatially downsample a point cloud via Morton-curve sorting.
+
+        Keeps one representative point per ``min_dist`` neighbourhood and
+        discards points farther than ``max_range`` from ``origin`` or
+        outside the ``[workspace_min, workspace_max]`` bounding box.
+
+        Args:
+            pointcloud: ``(N, 3)`` array of 3-D points.
+            min_dist: Minimum distance between two retained points.
+            max_range: Maximum distance from ``origin`` to keep a point.
+            origin: ``(3,)`` reference position for range culling.
+            workspace_min: ``(3,)`` lower corner of the workspace AABB.
+            workspace_max: ``(3,)`` upper corner of the workspace AABB.
+            cull: If ``True`` (default), apply range and AABB culling.
+
+        Returns:
+            ``(M, 3)`` filtered point cloud with ``M <= N``.
+        """
+        pts = np.asarray(pointcloud, dtype=np.float32).tolist()
+        origin = [float(x) for x in origin]
+        workspace_min = [float(x) for x in workspace_min]
+        workspace_max = [float(x) for x in workspace_max]
+        filtered = self._planner.filter_pointcloud(
+            pts,
+            float(min_dist),
+            float(max_range),
+            origin,
+            workspace_min,
+            workspace_max,
+            cull,
+        )
+        return np.asarray(filtered, dtype=np.float32)
+
+    def filter_self_from_pointcloud(
+        self,
+        pointcloud: np.ndarray,
+        point_radius: float,
+        config: np.ndarray,
+    ) -> np.ndarray:
+        """Remove points that collide with the robot body or environment.
+
+        Computes forward kinematics at ``config``, then drops every
+        point whose inflated sphere (radius ``point_radius``) overlaps
+        any robot collision sphere or any registered obstacle.
+
+        Args:
+            pointcloud: ``(N, 3)`` array of 3-D points.
+            point_radius: Inflation radius for each point.
+            config: Active-DOF configuration (same space as ``plan``).
+
+        Returns:
+            ``(M, 3)`` filtered point cloud with ``M <= N``.
+        """
+        pts = np.asarray(pointcloud, dtype=np.float32).tolist()
+        config = np.asarray(config, dtype=np.float64)
+        if len(config) != self._ndof:
+            raise ValueError(f"config has {len(config)} DOF, expected {self._ndof}")
+        filtered = self._planner.filter_self_from_pointcloud(
+            pts,
+            float(point_radius),
+            config.tolist(),
+        )
+        return np.asarray(filtered, dtype=np.float32)
+
+    # ── Subgroup switching ───────────────────────────────────────────
+
+    def set_subgroup(
+        self,
+        robot_name: str,
+        base_config: np.ndarray | None = None,
+    ) -> None:
+        """Switch active joints without rebuilding the collision environment.
+
+        Clears all constraints and costs.  The pointcloud is preserved.
+
+        Args:
+            robot_name: Subgroup name from ``PLANNING_SUBGROUPS``, or
+                ``"fetch"`` / ``"fetch_whole_body"`` for the full 11-DOF
+                body.
+            base_config: 11-DOF frozen config for inactive joints.
+                Defaults to the previously stored base config.
+        """
+        from fetch_planning.fetch import PLANNING_SUBGROUPS, fetch_robot_config
+
+        if base_config is not None:
+            self._base_config = np.asarray(base_config, dtype=np.float64).copy()
+        self._robot_name = robot_name
+
+        full_names = fetch_robot_config.joint_names
+        active_indices, base_dim = self._resolve_subgroup(
+            robot_name, full_names, PLANNING_SUBGROUPS
+        )
+        self._planner.set_subgroup(
+            active_indices, self._base_config.tolist(), base_dim
+        )
+        self._apply_subgroup_state(full_names, active_indices, base_dim)
 
     # ── Subgroup helpers ──────────────────────────────────────────────
 
@@ -382,8 +525,16 @@ class MotionPlanner:
         self,
         start: np.ndarray,
         goal: np.ndarray,
+        time_limit: float | None = None,
     ) -> PlanningResult:
-        """Plan a collision-free path from start to goal."""
+        """Plan a collision-free path from start to goal.
+
+        Args:
+            start: Start configuration (active DOF).
+            goal: Goal configuration (active DOF).
+            time_limit: Optional per-call override for the solver time
+                limit.  Defaults to ``self._config.time_limit``.
+        """
         start = np.asarray(start, dtype=np.float64)
         goal = np.asarray(goal, dtype=np.float64)
 
@@ -409,13 +560,18 @@ class MotionPlanner:
                 path_cost=float("inf"),
             )
 
+        if time_limit is None:
+            time_limit = self._config.time_limit
+
         result = self._planner.plan(
             start.tolist(),
             goal.tolist(),
             self._config.planner_name,
-            self._config.time_limit,
+            time_limit,
             self._config.simplify,
             self._config.interpolate,
+            self._config.interpolate_count,
+            self._config.resolution,
         )
 
         if not result.solved:
@@ -437,10 +593,111 @@ class MotionPlanner:
             path_cost=result.path_cost,
         )
 
+    def simplify_path(self, path: np.ndarray, time_limit: float = 1.0) -> np.ndarray:
+        """Run OMPL's shortcut-based path simplifier on ``path``.
+
+        Same pipeline ``plan(..., simplify=True)`` uses internally
+        (``reduceVertices`` + ``collapseCloseVertices`` + ``shortcutPath``
+        + B-spline smoothing), but detached so you can apply it to any
+        path you already have — e.g. replay an old plan with a
+        different collision environment.
+
+        Shortcuts only consult the motion validator.  Custom soft
+        costs (:class:`Cost`) are ignored; for cost-driven plans, run
+        :meth:`plan` with ``simplify=False`` and leave the path
+        untouched unless you've explicitly decided shortcut shaping
+        is acceptable.
+
+        Args:
+            path: ``(N, ndof)`` array of waypoints in the planner's
+                active DOF space.
+            time_limit: Wall-clock budget for the simplifier, seconds.
+
+        Returns:
+            ``(M, ndof)`` simplified waypoint array with ``M <= N``.
+        """
+        path = np.asarray(path, dtype=np.float64)
+        if path.ndim != 2 or path.shape[1] != self._ndof:
+            raise ValueError(
+                f"path must have shape (N, {self._ndof}), got {path.shape}"
+            )
+        simp = self._planner.simplify_path(path.tolist(), float(time_limit))
+        return np.array(simp, dtype=np.float64)
+
+    def interpolate_path(
+        self,
+        path: np.ndarray,
+        count: int = 0,
+        resolution: float = 64.0,
+    ) -> np.ndarray:
+        """Densify ``path`` with uniform waypoints along every edge.
+
+        Three modes (pick one; the other must be zero):
+
+            * ``count > 0``        — exactly that many total waypoints
+              distributed proportionally to edge length.
+            * ``resolution > 0.0`` — ``ceil(edge_length * resolution)``
+              waypoints per edge (uniform density in state-space
+              distance — the default).
+            * both ``0``           — OMPL's default longest-valid-segment
+              fraction.
+
+        Uses ``StateSpace::interpolate`` internally, so the inserted
+        states stay on the constraint manifold for projected state
+        spaces and on the Dubins / Reeds-Shepp curve for compound
+        base+arm paths.  No collision check is performed — the
+        densification only lifts points along the existing edges.
+
+        Args:
+            path: ``(N, ndof)`` waypoint array.
+            count: Exact total waypoint count if ``> 0``.
+            resolution: Waypoints per unit state-space distance if
+                ``> 0.0``.
+
+        Returns:
+            ``(M, ndof)`` densified waypoint array with ``M >= N``.
+        """
+        path = np.asarray(path, dtype=np.float64)
+        if path.ndim != 2 or path.shape[1] != self._ndof:
+            raise ValueError(
+                f"path must have shape (N, {self._ndof}), got {path.shape}"
+            )
+        dense = self._planner.interpolate_path(
+            path.tolist(), int(count), float(resolution)
+        )
+        return np.array(dense, dtype=np.float64)
+
     def validate(self, configuration: np.ndarray) -> bool:
         """Check if a configuration is collision-free."""
         configuration = np.asarray(configuration, dtype=np.float64)
         return self._planner.validate(configuration.tolist())
+
+    def validate_batch(self, configurations: np.ndarray) -> np.ndarray:
+        """Batched collision check — one SIMD block per ``rake`` configs.
+
+        Packs ``rake`` distinct configurations into a single VAMP
+        ``ConfigurationBlock<rake>`` and runs one ``fkcc<rake>`` call
+        per block, so ``N`` queries cost ``ceil(N / rake)`` SIMD
+        sweeps in the common case.  When a packed block fails we fall
+        back to per-lane single-state checks for that block only, so
+        the returned array is always exactly one bool per input.
+
+        Args:
+            configurations: ``(N, ndof)`` array of active-DOF
+                configurations.
+
+        Returns:
+            ``(N,)`` boolean array; ``True`` at index ``i`` iff
+            ``configurations[i]`` is collision-free.
+        """
+        configurations = np.asarray(configurations, dtype=np.float64)
+        if configurations.ndim != 2 or configurations.shape[1] != self._ndof:
+            raise ValueError(
+                f"configurations must have shape (N, {self._ndof}), "
+                f"got {configurations.shape}"
+            )
+        valid = self._planner.validate_batch(configurations.tolist())
+        return np.asarray(valid, dtype=bool)
 
     def sample_valid(self) -> np.ndarray:
         """Sample a random collision-free configuration."""
@@ -454,7 +711,7 @@ class MotionPlanner:
 
 def available_robots() -> list[str]:
     """Return all available robot names for planning."""
-    from fetch_planning.config.robot_config import PLANNING_SUBGROUPS
+    from fetch_planning.fetch import PLANNING_SUBGROUPS
 
     return ["fetch"] + sorted(PLANNING_SUBGROUPS.keys())
 
@@ -496,9 +753,10 @@ def create_planner(
             ``bitstar``, ``aitstar``, ``qrrtstar``, …) minimise this
             objective.  For whole-body planners the multilevel backend
             uses QRRTStar by default, whose cost aggregation already
-            includes the Reeds-Shepp reverse penalty — user costs add
-            on top, preserving the non-holonomic shaping.  Without any
-            costs the planner uses OMPL's default path-length objective.
+            includes the Dubins / Reeds-Shepp distance metric — user
+            costs add on top, preserving the non-holonomic shaping.
+            Without any costs the planner uses OMPL's default path-length
+            objective.
 
     Returns:
         A :class:`MotionPlanner` instance.

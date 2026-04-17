@@ -26,7 +26,7 @@ import numpy as np
 import pinocchio as pin
 import pinocchio.casadi as cpin
 
-from fetch_planning.config.robot_config import (
+from fetch_planning.fetch import (
     HOME_JOINTS,
     PLANNING_SUBGROUPS,
     WHOLE_BODY_URDF_PATH,

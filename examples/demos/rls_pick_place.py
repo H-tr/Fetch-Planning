@@ -43,7 +43,7 @@ import pybullet as pb
 import trimesh
 from fire import Fire
 
-from fetch_planning.config.robot_config import (
+from fetch_planning.fetch import (
     HOME_JOINTS,
     fetch_robot_config,
 )
@@ -52,7 +52,7 @@ from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
 
 # ── Constants ──────────────────────────────────────────────────────
-# Subgroup names from fetch_planning.config.robot_config.
+# Subgroup names from fetch_planning.fetch.
 BASE_SUBGROUP = "fetch_base"
 ARM_SUBGROUP = "fetch_arm_with_torso"  # 8 DOF: torso_lift + 7-DOF arm
 

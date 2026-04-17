@@ -13,7 +13,7 @@ JOINT_GROUPS (indices into full 11-DOF config):
 
 import numpy as np
 
-from fetch_planning.config.robot_config import HOME_JOINTS, JOINT_GROUPS
+from fetch_planning.fetch import HOME_JOINTS, JOINT_GROUPS
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.types import IKConfig, SE3Pose, SolveType
 

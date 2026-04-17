@@ -104,7 +104,7 @@ single import.
 |   9   | `wrist_flex_joint`       | arm    |                                |
 |  10   | `wrist_roll_joint`       | arm    |                                |
 
-Planning subgroups (`fetch_planning.config.robot_config.PLANNING_SUBGROUPS`):
+Planning subgroups (`fetch_planning.fetch.PLANNING_SUBGROUPS`):
 
 - `fetch_base` — 3 DOF, nonholonomic
 - `fetch_arm` — 7 DOF (arm only, torso+base fixed)
@@ -121,7 +121,7 @@ This repo is being built up in phases. See the [issue tracker](https://github.co
 ### Phase 1 — scaffold & public API  ✅ in progress
 
 - [x] Copy Autolife-Planning structure, rename to `fetch_planning/`
-- [x] Rewrite `config/robot_config.py` for Fetch 11-DOF layout
+- [x] Rewrite `fetch.py` for the Fetch 11-DOF layout
 - [x] Vendor Fetch URDFs + spherized meshes under
       `fetch_planning/resources/robot/fetch/`
 - [x] `CMakeLists.txt` wired for the three extensions:
@@ -197,7 +197,7 @@ import numpy as np
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.planning import create_planner
 from fetch_planning.types import SE3Pose, IKConfig, PlannerConfig
-from fetch_planning.config.robot_config import HOME_JOINTS
+from fetch_planning.fetch import HOME_JOINTS
 
 # --- IK (three interchangeable backends) ---
 solver = create_ik_solver("arm_with_torso", backend="ikfast")
@@ -236,8 +236,9 @@ Fetch-Planning/
 ├── .gitmodules                 # vamp@fetch-planning, ompl
 │
 ├── fetch_planning/             # Python package (mirrors autolife_planning/)
-│   ├── config/                 # robot_config.py — 11-DOF Fetch layout
+│   ├── fetch.py                # 11-DOF Fetch layout (joint groups, HOME, …)
 │   ├── types/                  # SE3Pose, IKConfig, PlannerConfig, …
+│   ├── trajectory/             # TOTG time parameterization
 │   ├── kinematics/             # TracIK / Pink / IKFast solvers + factory
 │   ├── planning/               # MotionPlanner, SymbolicContext, Constraint
 │   ├── grasping/               # grasp_anywhere sampler  [Phase 5]

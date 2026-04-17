@@ -15,7 +15,7 @@ import os
 
 import numpy as np
 
-from fetch_planning.config.robot_config import (
+from fetch_planning.fetch import (
     CHAIN_CONFIGS,
     HOME_JOINTS,
     JOINT_GROUPS,

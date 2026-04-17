@@ -75,10 +75,27 @@ NB_MODULE(_ompl_vamp, m) {
       .def("num_costs", &OmplVampPlanner::num_costs)
       .def("plan", &OmplVampPlanner::plan, nb::arg("start"), nb::arg("goal"),
            nb::arg("planner_name") = "rrtc", nb::arg("time_limit") = 10.0,
-           nb::arg("simplify") = true, nb::arg("interpolate") = true)
+           nb::arg("simplify") = true, nb::arg("interpolate") = true,
+           nb::arg("interpolate_count") = 0, nb::arg("resolution") = 64.0)
+      .def("simplify_path", &OmplVampPlanner::simplify_path, nb::arg("path"),
+           nb::arg("time_limit") = 1.0)
+      .def("interpolate_path", &OmplVampPlanner::interpolate_path,
+           nb::arg("path"), nb::arg("count") = 0, nb::arg("resolution") = 64.0)
       .def("validate", &OmplVampPlanner::validate, nb::arg("config"))
+      .def("validate_batch", &OmplVampPlanner::validate_batch,
+           nb::arg("configs"))
       .def("dimension", &OmplVampPlanner::dimension)
       .def("lower_bounds", &OmplVampPlanner::lower_bounds)
       .def("upper_bounds", &OmplVampPlanner::upper_bounds)
-      .def("min_max_radii", &OmplVampPlanner::min_max_radii);
+      .def("min_max_radii", &OmplVampPlanner::min_max_radii)
+      .def("filter_pointcloud", &OmplVampPlanner::filter_pointcloud,
+           nb::arg("points"), nb::arg("min_dist"), nb::arg("max_range"),
+           nb::arg("origin"), nb::arg("workspace_min"),
+           nb::arg("workspace_max"), nb::arg("cull") = true)
+      .def("filter_self_from_pointcloud",
+           &OmplVampPlanner::filter_self_from_pointcloud, nb::arg("points"),
+           nb::arg("point_radius"), nb::arg("config"))
+      .def("set_subgroup", &OmplVampPlanner::set_subgroup,
+           nb::arg("active_indices"), nb::arg("frozen_config"),
+           nb::arg("base_dim") = 0);
 }

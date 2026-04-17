@@ -5,7 +5,7 @@ import time
 import numpy as np
 import pybullet as pb
 
-from fetch_planning.config.robot_config import (
+from fetch_planning.fetch import (
     CHAIN_CONFIGS,
     HOME_JOINTS,
     JOINT_GROUPS,

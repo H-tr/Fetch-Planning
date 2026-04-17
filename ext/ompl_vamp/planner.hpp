@@ -100,7 +100,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vamp/collision/filter.hh>
 #include <vamp/collision/shapes.hh>
+#include <vamp/collision/sphere_sphere.hh>
 #include <vector>
 
 namespace fetch_planning {
@@ -296,7 +298,8 @@ class OmplVampPlanner {
 
   auto plan(std::vector<double> start, std::vector<double> goal,
             const std::string &planner_name, double time_limit, bool simplify,
-            bool interpolate) -> PlanResult {
+            bool interpolate, int interpolate_count = 0,
+            double resolution = 64.0) -> PlanResult {
     if (has_base_) {
       if (!constraints_.empty()) {
         throw std::invalid_argument(
@@ -309,21 +312,250 @@ class OmplVampPlanner {
                                        interpolate);
       }
       return plan_multilevel(start, goal, planner_name, time_limit, simplify,
-                             interpolate);
+                             interpolate, interpolate_count, resolution);
     }
     return plan_geometric(start, goal, planner_name, time_limit, simplify,
-                          interpolate);
+                          interpolate, interpolate_count, resolution);
   }
 
   auto validate(std::vector<double> config) -> bool {
-    alignas(Robot::Configuration::S::Alignment)
-        std::array<float, Robot::Configuration::num_scalars_rounded>
-            buf{};
-    std::copy(frozen_config_.begin(), frozen_config_.end(), buf.begin());
-    for (std::size_t i = 0; i < active_indices_.size(); ++i)
-      buf[active_indices_[i]] = static_cast<float>(config[i]);
-    auto q = Robot::Configuration(buf.data());
+    if (static_cast<int>(config.size()) != active_dim_) {
+      throw std::invalid_argument(std::string("validate: config length ") +
+                                  std::to_string(config.size()) +
+                                  " does not match active DOF " +
+                                  std::to_string(active_dim_) + ".");
+    }
+    auto q = build_full_config_(config);
     return vamp::planning::validate_motion<Robot, kRake, 1>(q, q, env_);
+  }
+
+  // Batched collision check — packs up to ``kRake`` distinct
+  // configurations directly into a VAMP ``ConfigurationBlock<kRake>``
+  // so a single ``Robot::fkcc<kRake>`` call sphere-FKs and
+  // collision-checks them against the SIMD environment in one sweep.
+  // Same SIMD primitive the motion-edge validator uses for interpolated
+  // samples — we just feed it independent configs per lane.
+  //
+  // If a packed block fails, we fall back to per-lane single-state
+  // checks so the caller still gets one bool per input config.  In the
+  // common case (most configs valid) this is O(N/kRake) SIMD calls;
+  // worst case (every block fails) degrades to the baseline N single
+  // checks.
+  //
+  // Subgroup planners expand each reduced-DOF config to the full body
+  // via the stored frozen pose before packing, mirroring
+  // ``validate(...)``.
+  auto validate_batch(const std::vector<std::vector<double>> &configs)
+      -> std::vector<bool> {
+    const std::size_t n = configs.size();
+    std::vector<bool> result(n, false);
+    if (n == 0) return result;
+
+    for (std::size_t i = 0; i < n; ++i) {
+      if (static_cast<int>(configs[i].size()) != active_dim_) {
+        throw std::invalid_argument(
+            std::string("validate_batch: config[") + std::to_string(i) +
+            "] length " + std::to_string(configs[i].size()) +
+            " does not match active DOF " + std::to_string(active_dim_) + ".");
+      }
+    }
+
+    // ``ConfigurationBlock<kRake>::pack`` expects row-major layout
+    // where row ``d`` (joint dimension) holds kRake scalars — the
+    // lane values for that joint across the rake.  So
+    //     buf[d * kRake + lane] = full_config(configs[lane])[d].
+    alignas(vamp::FloatVectorAlignment)
+        std::array<float, Robot::dimension * kRake>
+            blk_buf{};
+
+    auto write_lane = [&](std::size_t lane, const std::vector<double> &cfg) {
+      for (std::size_t d = 0; d < Robot::dimension; ++d)
+        blk_buf[d * kRake + lane] = frozen_config_[d];
+      for (std::size_t k = 0; k < active_indices_.size(); ++k)
+        blk_buf[active_indices_[k] * kRake + lane] =
+            static_cast<float>(cfg[k]);
+    };
+
+    for (std::size_t i = 0; i < n; i += kRake) {
+      const std::size_t chunk = std::min(kRake, n - i);
+      for (std::size_t lane = 0; lane < chunk; ++lane)
+        write_lane(lane, configs[i + lane]);
+      // Pad the tail lanes by repeating the first real config in this
+      // block.  Padding with a real (tested) config preserves
+      // correctness: if the packed block passes, every real lane is
+      // valid; if it fails we only run the per-lane fallback over the
+      // real lanes, so the padded lanes never appear in the output.
+      for (std::size_t lane = chunk; lane < kRake; ++lane)
+        write_lane(lane, configs[i]);
+
+      typename Robot::template ConfigurationBlock<kRake> block(blk_buf.data());
+
+      const bool block_valid =
+          env_.attachments ? Robot::template fkcc_attach<kRake>(env_, block)
+                           : Robot::template fkcc<kRake>(env_, block);
+
+      if (block_valid) {
+        for (std::size_t lane = 0; lane < chunk; ++lane)
+          result[i + lane] = true;
+      } else {
+        for (std::size_t lane = 0; lane < chunk; ++lane) {
+          auto q = build_full_config_(configs[i + lane]);
+          result[i + lane] =
+              vamp::planning::validate_motion<Robot, kRake, 1>(q, q, env_);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  // Standalone path simplification — same pipeline OMPL's
+  // ``SimpleSetup::simplifySolution`` runs against the current collision
+  // environment, but detached from ``plan(...)``.  Input and output are
+  // plain waypoint lists in the planner's active DOF space.
+  //
+  // Shortcuts only consult the motion validator — custom soft costs are
+  // ignored.  For constrained/cost planners, prefer
+  // ``plan(simplify=False)`` and leave the path untouched unless you've
+  // explicitly decided shortcut shaping is acceptable.
+  auto simplify_path(const std::vector<std::vector<double>> &path,
+                     double time_limit) -> std::vector<std::vector<double>> {
+    if (path.size() < 2) return path;
+    const bool constrained = !constraints_.empty();
+    auto [si, active_space] = make_space_information_(constrained);
+    og::PathGeometric geo = waypoints_to_path_(path, si, active_space);
+    og::PathSimplifier simp(si);
+    simp.simplify(geo, time_limit);
+    return path_to_waypoints_(geo);
+  }
+
+  // Standalone path densification — same three modes as
+  // ``plan(..., interpolate=True, ...)``:
+  //   * ``count > 0``        → exactly that many total waypoints.
+  //   * ``resolution > 0.0`` → ``ceil(edge_length * resolution)`` waypoints
+  //                            per edge (uniform density in state-space
+  //                            distance — SE(2) curves for base subgroups).
+  //   * both 0               → OMPL's default longest-valid-segment
+  //                            fraction.
+  // No collision check — densification only calls
+  // ``StateSpace::interpolate`` on the existing edges.  For compound
+  // base+arm paths the SE(2) interpolator stays on the Dubins / Reeds-
+  // Shepp curve, so the inserted waypoints respect the nonholonomic
+  // constraint.
+  auto interpolate_path(const std::vector<std::vector<double>> &path, int count,
+                        double resolution) -> std::vector<std::vector<double>> {
+    if (count > 0 && resolution > 0.0) {
+      throw std::invalid_argument(
+          "interpolate_path: pass at most one of count (>0) or resolution "
+          "(>0), not both.");
+    }
+    if (resolution < 0.0) {
+      throw std::invalid_argument(
+          "interpolate_path: resolution must be >= 0 (0 disables).");
+    }
+    if (path.size() < 2) return path;
+    const bool constrained = !constraints_.empty();
+    auto [si, active_space] = make_space_information_(constrained);
+    og::PathGeometric geo = waypoints_to_path_(path, si, active_space);
+    if (count > 0) {
+      geo.interpolate(static_cast<unsigned int>(count));
+    } else if (resolution > 0.0) {
+      densify_by_resolution(geo, active_space, resolution);
+    } else {
+      geo.interpolate();
+    }
+    return path_to_waypoints_(geo);
+  }
+
+  // ── Point cloud filtering ───────────────────────────────────────
+
+  /// Spatial down-sampling via Morton-curve sorting.
+  auto filter_pointcloud(const std::vector<std::array<float, 3>> &points,
+                         float min_dist, float max_range,
+                         const std::array<float, 3> &origin,
+                         const std::array<float, 3> &workspace_min,
+                         const std::array<float, 3> &workspace_max, bool cull)
+      -> std::vector<std::array<float, 3>> {
+    vamp::collision::Point o{origin[0], origin[1], origin[2]};
+    vamp::collision::Point ws_min{workspace_min[0], workspace_min[1],
+                                  workspace_min[2]};
+    vamp::collision::Point ws_max{workspace_max[0], workspace_max[1],
+                                  workspace_max[2]};
+
+    std::vector<vamp::collision::Point> pc;
+    pc.reserve(points.size());
+    for (const auto &p : points) pc.push_back({p[0], p[1], p[2]});
+
+    auto filtered = vamp::collision::filter_pointcloud(pc, min_dist, max_range,
+                                                       o, ws_min, ws_max, cull);
+
+    std::vector<std::array<float, 3>> out;
+    out.reserve(filtered.size());
+    for (const auto &p : filtered) out.push_back({p[0], p[1], p[2]});
+    return out;
+  }
+
+  /// Remove points that collide with the robot body or the environment.
+  auto filter_self_from_pointcloud(
+      const std::vector<std::array<float, 3>> &points, float point_radius,
+      const std::vector<double> &config) -> std::vector<std::array<float, 3>> {
+    if (static_cast<int>(config.size()) != active_dim_) {
+      throw std::invalid_argument(
+          std::string("filter_self_from_pointcloud: config length ") +
+          std::to_string(config.size()) + " does not match active DOF " +
+          std::to_string(active_dim_) + ".");
+    }
+
+    auto full_arr = build_full_config_(config).to_array();
+    typename Robot::template ConfigurationBlock<1> block;
+    for (std::size_t i = 0; i < Robot::dimension; ++i) block[i] = full_arr[i];
+
+    typename Robot::template Spheres<1> spheres;
+    Robot::template sphere_fk<1>(block, spheres);
+
+    std::vector<std::array<float, 3>> out;
+    out.reserve(points.size());
+
+    for (const auto &pt : points) {
+      const float x = pt[0], y = pt[1], z = pt[2], r = point_radius;
+      bool valid = true;
+      for (std::size_t i = 0; i < Robot::n_spheres; ++i) {
+        if (vamp::collision::sphere_sphere_sql2(
+                spheres.x[{i, 0}], spheres.y[{i, 0}], spheres.z[{i, 0}],
+                spheres.r[{i, 0}], x, y, z, r) < 0 ||
+            vamp::sphere_environment_in_collision(env_, x, y, z, r)) {
+          valid = false;
+          break;
+        }
+      }
+      if (valid) out.push_back(pt);
+    }
+    return out;
+  }
+
+  /// Switch active joints without rebuilding the collision environment.
+  ///
+  /// Clears all constraints and costs.  The pointcloud and collision
+  /// geometry are preserved.
+  ///
+  /// @param active_indices  Joint indices into the full-body config.
+  /// @param frozen_config   Full-body stance for joints outside
+  ///     ``active_indices``.
+  /// @param base_dim  How many of the *leading* active indices form
+  ///     the nonholonomic base (0 = arm-only, 3 = SE2 base).
+  void set_subgroup(std::vector<int> active_indices,
+                    std::vector<double> frozen_config, int base_dim) {
+    active_dim_ = static_cast<int>(active_indices.size());
+    active_indices_ = std::move(active_indices);
+    base_dim_ = base_dim;
+    has_base_ = base_dim_ > 0;
+    base_only_ = has_base_ && (active_dim_ == base_dim_);
+    frozen_config_.resize(frozen_config.size());
+    for (std::size_t i = 0; i < frozen_config.size(); ++i)
+      frozen_config_[i] = static_cast<float>(frozen_config[i]);
+    constraints_.clear();
+    clear_costs();
+    build_state_space();
   }
 
   auto dimension() const -> int { return active_dim_; }
@@ -394,6 +626,153 @@ class OmplVampPlanner {
   std::vector<double> cost_weights_;
 
   void sync_env() { env_ = VampEnv(float_env_); }
+
+  // Expand an active-DOF config into a full-body VAMP Configuration,
+  // injecting the frozen pose for joints outside ``active_indices_``.
+  auto build_full_config_(const std::vector<double> &config) const
+      -> Robot::Configuration {
+    alignas(Robot::Configuration::S::Alignment)
+        std::array<float, Robot::Configuration::num_scalars_rounded>
+            buf{};
+    for (std::size_t i = 0; i < frozen_config_.size(); ++i)
+      buf[i] = frozen_config_[i];
+    for (std::size_t i = 0; i < active_indices_.size(); ++i)
+      buf[active_indices_[i]] = static_cast<float>(config[i]);
+    return Robot::Configuration(buf.data());
+  }
+
+  // Build a ``SpaceInformation`` configured with our validity / motion
+  // checkers — extracted from ``plan(...)`` so the standalone
+  // simplify_path / interpolate_path share exactly the same configuration.
+  //
+  // For base-including subgroups we reuse ``space_`` (either SE(2)
+  // base-only or CompoundStateSpace(SE2 + R^N)) and wire up the
+  // ``SubgroupValidityChecker`` / ``SubgroupMotionValidator``; for
+  // arm-only subgroups we use a plain SpaceInformation, or wrap in
+  // ``ConstrainedSpaceInformation`` when constraints are present.
+  auto make_space_information_(bool constrained)
+      -> std::pair<ob::SpaceInformationPtr, ob::StateSpacePtr> {
+    ob::StateSpacePtr active_space = space_;
+    ob::SpaceInformationPtr si;
+    if (constrained) {
+      auto intersection = std::make_shared<ob::ConstraintIntersection>(
+          static_cast<unsigned int>(active_dim_), constraints_);
+      auto css =
+          std::make_shared<ob::ProjectedStateSpace>(space_, intersection);
+      auto csi = std::make_shared<ob::ConstrainedSpaceInformation>(css);
+      css->setup();
+      si = csi;
+      active_space = css;
+    } else {
+      si = std::make_shared<ob::SpaceInformation>(space_);
+    }
+    si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
+        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+    if (!constrained) {
+      si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
+          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+    }
+    si->setup();
+    return {si, active_space};
+  }
+
+  // Lift a waypoint list into an OMPL ``PathGeometric``.  States are
+  // allocated from ``active_space`` (possibly a ProjectedStateSpace
+  // wrapper) and populated via the same layout ``write_scoped_state``
+  // uses for ``plan()`` start/goal states.
+  auto waypoints_to_path_(const std::vector<std::vector<double>> &waypoints,
+                          const ob::SpaceInformationPtr &si,
+                          const ob::StateSpacePtr &active_space)
+      -> og::PathGeometric {
+    og::PathGeometric path(si);
+    for (const auto &w : waypoints) {
+      if (static_cast<int>(w.size()) != active_dim_) {
+        throw std::invalid_argument(
+            std::string("Waypoint dimension ") + std::to_string(w.size()) +
+            " does not match active DOF " + std::to_string(active_dim_) + ".");
+      }
+      auto *s = active_space->allocState();
+      write_state_ptr_(s, w);
+      path.append(s);
+      active_space->freeState(s);
+    }
+    return path;
+  }
+
+  // Flatten a PathGeometric back into the waypoint list the Python side
+  // expects.  Shares the state-layout decoding with ``read_state`` so
+  // SE(2) and compound base+arm paths round-trip correctly.
+  auto path_to_waypoints_(const og::PathGeometric &path)
+      -> std::vector<std::vector<double>> {
+    std::vector<std::vector<double>> out;
+    out.reserve(path.getStateCount());
+    for (std::size_t i = 0; i < path.getStateCount(); ++i) {
+      out.push_back(read_state(path.getState(i)));
+    }
+    return out;
+  }
+
+  // Populate a raw ``ob::State*`` from an active-DOF waypoint.
+  // Mirrors ``write_scoped_state`` but accepts a state pointer allocated
+  // from the (possibly wrapped) active_space.
+  void write_state_ptr_(ob::State *s, const std::vector<double> &config) const {
+    auto *target = s;
+    if (auto *wrapper =
+            dynamic_cast<ob::WrapperStateSpace::StateType *>(s)) {
+      target = wrapper->getState();
+    }
+    if (base_only_) {
+      auto *se2 = target->as<ob::SE2StateSpace::StateType>();
+      se2->setX(config[0]);
+      se2->setY(config[1]);
+      se2->setYaw(config[2]);
+    } else if (has_base_) {
+      auto *compound = target->as<ob::CompoundStateSpace::StateType>();
+      auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      auto *rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
+      se2->setX(config[0]);
+      se2->setY(config[1]);
+      se2->setYaw(config[2]);
+      for (int i = base_dim_; i < active_dim_; ++i) {
+        rv->values[i - base_dim_] = config[i];
+      }
+    } else {
+      auto *rv = target->as<ob::RealVectorStateSpace::StateType>();
+      for (int i = 0; i < active_dim_; ++i) rv->values[i] = config[i];
+    }
+  }
+
+  // Densify ``path`` so each edge of state-space length ``d`` is split
+  // into ``ceil(d * resolution)`` equal segments.  Uses
+  // ``StateSpace::interpolate`` so the inserted states stay on any
+  // non-linear metric (Dubins / Reeds-Shepp SE(2), projected manifold).
+  static void densify_by_resolution(og::PathGeometric &path,
+                                    const ob::StateSpacePtr &stsp,
+                                    double resolution) {
+    auto &states = path.getStates();
+    if (states.size() < 2) return;
+    std::vector<ob::State *> snap;
+    snap.reserve(states.size());
+    for (auto *s : states) {
+      auto *c = stsp->allocState();
+      stsp->copyState(c, s);
+      snap.push_back(c);
+    }
+    for (auto *s : states) stsp->freeState(s);
+    states.clear();
+    states.push_back(snap.front());
+    for (std::size_t i = 1; i < snap.size(); ++i) {
+      double d = stsp->distance(snap[i - 1], snap[i]);
+      int n = std::max(1, static_cast<int>(std::ceil(d * resolution)));
+      for (int k = 1; k < n; ++k) {
+        auto *tmp = stsp->allocState();
+        stsp->interpolate(snap[i - 1], snap[i], static_cast<double>(k) / n,
+                          tmp);
+        states.push_back(tmp);
+      }
+      states.push_back(snap[i]);
+    }
+  }
 
   void build_state_space() {
     Robot::Configuration lo, hi;
@@ -531,7 +910,9 @@ class OmplVampPlanner {
   auto plan_multilevel(const std::vector<double> &start,
                        const std::vector<double> &goal,
                        const std::string &planner_name, double time_limit,
-                       bool simplify, bool interpolate) -> PlanResult {
+                       bool simplify, bool interpolate,
+                       int interpolate_count = 0,
+                       double resolution = 64.0) -> PlanResult {
     // Build a 2-level hierarchy:
     //   Level 0: SE(2) (base pose, non-holonomic — Dubins or Reeds-Shepp)
     //   Level 1: Compound(SE(2) + R^N) (full active space)
@@ -638,7 +1019,15 @@ class OmplVampPlanner {
         og::PathSimplifier simplifier(top_si);
         simplifier.simplifyMax(path);
       }
-      if (interpolate) path.interpolate();
+      if (interpolate) {
+        if (interpolate_count > 0) {
+          path.interpolate(static_cast<unsigned int>(interpolate_count));
+        } else if (resolution > 0.0) {
+          densify_by_resolution(path, top_si->getStateSpace(), resolution);
+        } else {
+          path.interpolate();
+        }
+      }
       result.path_cost = path.length();
 
       for (std::size_t i = 0; i < path.getStateCount(); ++i) {
@@ -689,7 +1078,9 @@ class OmplVampPlanner {
   auto plan_geometric(const std::vector<double> &start,
                       const std::vector<double> &goal,
                       const std::string &planner_name, double time_limit,
-                      bool simplify, bool interpolate) -> PlanResult {
+                      bool simplify, bool interpolate,
+                      int interpolate_count = 0,
+                      double resolution = 64.0) -> PlanResult {
     const bool constrained = !constraints_.empty();
     if (constrained) {
       reject_incompatible_planner(planner_name);
@@ -751,7 +1142,15 @@ class OmplVampPlanner {
       if (simplify) ss.simplifySolution();
 
       auto &path = ss.getSolutionPath();
-      if (interpolate) path.interpolate();
+      if (interpolate) {
+        if (interpolate_count > 0) {
+          path.interpolate(static_cast<unsigned int>(interpolate_count));
+        } else if (resolution > 0.0) {
+          densify_by_resolution(path, si->getStateSpace(), resolution);
+        } else {
+          path.interpolate();
+        }
+      }
       result.path_cost = path.length();
 
       for (std::size_t i = 0; i < path.getStateCount(); ++i) {

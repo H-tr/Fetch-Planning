@@ -79,6 +79,27 @@ target_compile_options(_ompl_vamp PRIVATE
 
 install(TARGETS _ompl_vamp LIBRARY DESTINATION fetch_planning)
 
+# ── Time parameterization extension (TOTG, Eigen-only) ───────────────
+
+nanobind_add_module(_time_parameterization
+    ext/time_parameterization/totg.cpp
+    ext/time_parameterization/time_parameterization_ext.cpp
+)
+
+target_include_directories(_time_parameterization PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/ext/time_parameterization
+)
+
+target_link_libraries(_time_parameterization PRIVATE
+    Eigen3::Eigen
+)
+
+target_compile_options(_time_parameterization PRIVATE
+    -march=native
+)
+
+install(TARGETS _time_parameterization LIBRARY DESTINATION fetch_planning)
+
 # ── TRAC-IK extension (pybind11) ─────────────────────────────────────
 
 if(orocos_kdl_FOUND AND NLopt_FOUND)

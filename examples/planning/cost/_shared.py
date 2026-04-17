@@ -1,30 +1,34 @@
-"""Shared scaffolding for the constrained-planning gallery.
+"""Shared scaffolding for the soft-cost-planning gallery.
 
-Every demo in this folder boots the same PyBullet env and arm
-SymbolicContext, searches for a random manifold-feasible goal via
-seed-and-project, and then plans + animates.  Those three pieces
-are factored out here so each demo script can focus on the one
-interesting line: the CasADi residual that defines the manifold.
+Mirrors ``examples/planning/constrained/_shared.py`` one-for-one, with
+one deliberate difference: the demos here drive the planner with a
+:class:`~fetch_planning.planning.costs.Cost` — a scalar CasADi
+expression that RRT*-family planners integrate along every motion —
+rather than a hard :class:`Constraint`.  The per-state penalty is
+always ``ca.sumsqr(residual)`` of the same residual used in the
+constrained demo, so the "manifold" geometry is identical; the
+planner just sees it as a preference instead of a law.
 
-Visualisation primitives (``draw_plane``, ``draw_rod``,
-``draw_sphere``, ``draw_frame``) live on :class:`PyBulletEnv` itself
-— each demo calls ``env.draw_*`` exactly like it already calls
-``env.animate_path``.
+We still reuse :meth:`SymbolicContext.project` for goal selection.
+Projecting an otherwise-random seed onto ``residual = 0`` gives a
+goal that sits exactly on the soft manifold, which makes the cost's
+shaping effect visually obvious in the animation (the arm hugs the
+manifold whenever it can).
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
+from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.planning import SymbolicContext
 
 SUBGROUP = "fetch_arm"
-# gripper_link is the rigid gripper body frame which the constraint
-# residuals use for orientation locks.  For translation constraints we
-# use the TCP — the symmetric midpoint between the two finger link
-# origins — via :func:`ee_translation` / :func:`ee_position` below.
+# gripper_link is the rigid gripper body frame which the cost residuals
+# use for orientation locks.  For translation terms we use the TCP —
+# the symmetric midpoint between the two finger link origins — via
+# :func:`ee_translation` / :func:`ee_position` below.
 EE_LINK = "gripper_link"
 LEFT_FINGER_LINK = "l_gripper_finger_link"
 RIGHT_FINGER_LINK = "r_gripper_finger_link"
@@ -55,10 +59,13 @@ def setup():
 def find_goal(ctx, residual, start, planner, score, n: int = 400, seed: int = 0):
     """Return a valid manifold-feasible goal that maximises ``score(xyz)``.
 
-    Samples random joint perturbations of *start*, projects each
-    onto the manifold via ``ctx.project``, keeps the valid config
-    whose gripper position maximises ``score``.  Valid means inside
-    the joint bounds AND collision-free under *planner*.
+    Samples random joint perturbations of *start*, projects each onto
+    ``residual = 0`` via :meth:`SymbolicContext.project`, and keeps the
+    valid config whose gripper position maximises ``score``.  Valid
+    means inside the joint bounds AND collision-free under *planner*.
+
+    The cost-planning demos pass the same residual they used to build
+    their :class:`Cost` so the goal lands exactly on the soft manifold.
     """
     lower = np.array(planner._planner.lower_bounds())
     upper = np.array(planner._planner.upper_bounds())
