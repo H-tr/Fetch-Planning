@@ -23,12 +23,12 @@ kinematic chain and solve mode from the arguments alone.
 ```python
 import numpy as np
 
-from fetch_planning.config.robot_config import HOME_JOINTS, JOINT_GROUPS
+from fetch_planning.fetch import HOME_JOINTS, JOINT_GROUPS
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.types import IKConfig, SE3Pose, SolveType
 
 G = JOINT_GROUPS
-HOME_LEFT_ARM = HOME_JOINTS[G["left_arm"]]
+HOME_ARM = HOME_JOINTS[G["arm"]]
 
 config = IKConfig(
     timeout=0.2,                  # seconds per TRAC-IK attempt
@@ -39,28 +39,24 @@ config = IKConfig(
     orientation_tolerance=1e-4,   # post-solve check (radians)
 )
 
-solver = create_ik_solver("left_arm", config=config)
+solver = create_ik_solver("arm", config=config)
 
-home_pose = solver.fk(HOME_LEFT_ARM)
+home_pose = solver.fk(HOME_ARM)
 target = SE3Pose(
     position=home_pose.position + np.array([0.22, 0.15, 0.05]),
     rotation=home_pose.rotation,
 )
 
-result = solver.solve(target, seed=HOME_LEFT_ARM)
+result = solver.solve(target, seed=HOME_ARM)
 if result.success:
     print(f"solution: {np.round(result.joint_positions, 4)}")
 ```
 
-The interactive visualization lives in `examples/ik_example_vis.py`:
+The interactive visualization lives in `examples/ik/basic_vis.py`:
 
 ```bash
-pixi run -e dev python examples/ik_example_vis.py
+pixi run -e dev python examples/ik/basic_vis.py
 ```
-
-It sweeps the left arm, right arm, and both whole-body chains,
-drawing RGB end-effector frames on every solution.  `n` advances to
-the next target; `q` quits.
 
 ---
 
@@ -77,26 +73,22 @@ self-collision avoidance on top of the primary task.  Same
 </video>
 
 ```python
-from fetch_planning.config.robot_config import HOME_JOINTS, JOINT_GROUPS
+from fetch_planning.fetch import HOME_JOINTS, JOINT_GROUPS
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.types import PinkIKConfig, SE3Pose
 
 G = JOINT_GROUPS
-SEED = np.concatenate([
-    HOME_JOINTS[G["legs"]],
-    HOME_JOINTS[G["waist"]],
-    HOME_JOINTS[G["left_arm"]],
-])
+SEED = np.concatenate([HOME_JOINTS[G["torso"]], HOME_JOINTS[G["arm"]]])
 
 config = PinkIKConfig(
     lm_damping=1e-3,
     com_cost=0.1,                                    # CoM stability
-    camera_frame="Link_Waist_Yaw_to_Shoulder_Inner", # chest camera frame
+    camera_frame="head_camera_rgb_optical_frame",    # head camera frame
     camera_cost=0.1,                                 # camera stabilization
     max_iterations=200,
 )
 
-solver = create_ik_solver("whole_body", side="left", backend="pink", config=config)
+solver = create_ik_solver("arm_with_torso", backend="pink", config=config)
 
 home_pose = solver.fk(SEED)
 target = SE3Pose(home_pose.position + np.array([0.30, 0.0, 0.0]), home_pose.rotation)
@@ -107,36 +99,9 @@ if result.success:
     print(f"Position error: {result.position_error * 1000:.2f} mm")
 ```
 
-### With self-collision avoidance
-
-```python
-from fetch_planning.kinematics.collision_model import build_collision_model
-
-collision_ctx = build_collision_model(
-    "path/to/autolife_simple.urdf",
-    srdf_path="path/to/autolife.srdf",
-)
-
-config = PinkIKConfig(
-    lm_damping=1e-3,
-    com_cost=0.1,
-    self_collision=True,
-    collision_pairs=5,
-    solver="proxqp",
-)
-solver = create_ik_solver("whole_body", side="left", backend="pink", config=config)
-solver.set_collision_context(collision_ctx)
-```
-
 ```bash
-pixi run -e dev python examples/constrained_ik_example_vis.py
+pixi run -e dev python examples/ik/constrained_vis.py
 ```
-
-The clip above sweeps four reach targets — front, high, side, and
-low-cross-body.  Throughout, the chest camera link and the robot's
-centre of mass are both held at their home values by the secondary
-QP tasks, so the whole body coordinates the reach instead of just
-the arm.
 
 ---
 
@@ -155,7 +120,7 @@ every point as a sphere of ``point_radius`` during edge validation.
 import numpy as np
 import trimesh
 
-from fetch_planning.config.robot_config import HOME_JOINTS, autolife_robot_config
+from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
@@ -163,7 +128,7 @@ from fetch_planning.types import PlannerConfig
 cloud = np.asarray(trimesh.load("table.ply").vertices, dtype=np.float32)
 
 planner = create_planner(
-    "autolife_left_arm",
+    "fetch_arm",
     config=PlannerConfig(
         planner_name="rrtc",
         time_limit=2.0,
@@ -178,61 +143,59 @@ goal = planner.sample_valid()
 
 result = planner.plan(start, goal)
 if result.success:
-    env = PyBulletEnv(autolife_robot_config, visualize=True)
+    env = PyBulletEnv(fetch_robot_config, visualize=True)
     env.add_pointcloud(cloud)
     env.animate_path(planner.embed_path(result.path))
 ```
 
-The runnable version lives at `examples/motion_planning_example.py`
+The runnable version lives at `examples/planning/motion.py`
 and uses the bundled `table.ply` — no downloads needed.
 
 ```bash
-pixi run -e dev python examples/motion_planning_example.py
-pixi run -e dev python examples/motion_planning_example.py --planner_name bitstar --time_limit 3
+pixi run -e dev python examples/planning/motion.py
+pixi run -e dev python examples/planning/motion.py --planner_name bitstar --time_limit 3
 ```
 
 ---
 
 ## Subgroup Planning
 
-Plan for just the joints you care about — a single arm, both arms,
-torso + arm, the whole body, or the 3-DOF virtual base — while the
-rest of the robot stays pinned to whatever 24-DOF configuration you
-pass in as `base_config`.  The C++ collision checker injects the
-inactive joints on every state and edge query, so any plan you get
-back is valid for the *whole* robot, not just the subgroup.
+Plan for just the joints you care about — arm, arm + torso, base,
+base + arm, or the whole body — while the rest of the robot stays
+pinned to whatever 11-DOF configuration you pass in as `base_config`.
+The C++ collision checker injects the inactive joints on every state
+and edge query, so any plan you get back is valid for the *whole*
+robot, not just the subgroup.
 
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/subgroup_planning.mp4" type="video/mp4">
-</video>
+Subgroups that include the mobile base joints (`fetch_base`,
+`fetch_base_arm`, `fetch_whole_body`) automatically switch to
+OMPL multilevel planning with Dubins (or Reeds-Shepp) curves on the
+SE(2) base — so the returned base path respects the nonholonomic
+differential-drive constraint.
 
 ### Available subgroups
 
 | Category | Subgroup | DOF |
 |---|---|---|
-| Mobile base | `autolife_base` | 3 |
-| Height chain | `autolife_height` | 3 |
-| Single arm | `autolife_left_arm`, `autolife_right_arm` | 7 |
-| Torso + arm | `autolife_torso_left_arm`, `autolife_torso_right_arm` | 9 |
-| Dual arm | `autolife_dual_arm` | 14 |
-| Whole body (no base) | `autolife_body` | 21 |
-
-The full-body planner `"autolife"` (24 DOF including the virtual base)
-is also available.
+| Mobile base | `fetch_base` | 3 |
+| Arm | `fetch_arm` | 7 |
+| Arm + torso | `fetch_arm_with_torso` | 8 |
+| Base + arm | `fetch_base_arm` | 10 |
+| Whole body | `fetch_whole_body` (alias `fetch`) | 11 |
 
 ### Basic usage
 
 ```python
-from fetch_planning.config.robot_config import HOME_JOINTS
+from fetch_planning.fetch import HOME_JOINTS
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
 
 # Pin the rest of the body to whatever pose you like — HOME_JOINTS,
-# a live robot state, or any custom 24-DOF array.
+# a live robot state, or any custom 11-DOF array.
 base_cfg = HOME_JOINTS.copy()
 
 planner = create_planner(
-    "autolife_left_arm",
+    "fetch_arm",
     config=PlannerConfig(planner_name="rrtc"),
     base_config=base_cfg,
 )
@@ -247,14 +210,30 @@ if result.success:
 ```
 
 ```bash
-pixi run -e dev python examples/subgroup_planning_example.py
-pixi run -e dev python examples/subgroup_planning_example.py --planner_name prm
+pixi run -e dev python examples/planning/subgroup.py
+pixi run -e dev python examples/planning/subgroup.py --planner_name prm
 ```
 
-The example above iterates through several kinematic subgroups at
-three stances (high / mid / low).  Press `space` to play/pause each
-clip, `←/→` to step through waypoints, `n` to advance to the next
-plan, and close the window to quit.
+---
+
+## Nonholonomic Whole-Body Planning
+
+For tasks that need the base and arm to move simultaneously, drive
+the `fetch_whole_body` subgroup.  OMPL's multilevel framework plans
+the SE(2) base pose on the lower level (Dubins / Reeds-Shepp) and
+lifts the result into the 11-DOF compound space on the upper level,
+so the returned path has a forward-only (or reverse-capable) base
+trajectory with the arm changing shape alongside it.
+
+```bash
+pixi run -e dev python examples/planning/multilevel_single_step.py
+pixi run -e dev python examples/planning/nonholonomic.py
+```
+
+`multilevel_single_step.py` is a single short-horizon plan you can
+inspect visually.  `nonholonomic.py` is a multi-stage pick-and-place
+demo that reuses a single planner across twelve navigation /
+manipulation segments.
 
 ---
 
@@ -268,116 +247,71 @@ satisfy the constraint.  The residual can encode any task-space
 equation you can express symbolically: a plane, a rail, an
 orientation lock, a contact constraint, a handover coupling.
 
-All five demos live in `examples/constrained_planning/` and share a
+Constrained planning uses an arm-only subgroup (`fetch_arm`) — the
+nonholonomic base is a different state space and cannot be combined
+with a `ProjectedStateSpace` wrapper.
+
+All five demos live in `examples/planning/constrained/` and share a
 tiny scaffold (`_shared.py`) so each file only contains the one
 interesting line: the residual itself.  Run any of them with:
 
 ```bash
-pixi run -e dev python examples/constrained_planning/plane.py
-pixi run -e dev python examples/constrained_planning/plane_with_obstacle.py
-pixi run -e dev python examples/constrained_planning/line_horizontal.py
-pixi run -e dev python examples/constrained_planning/line_vertical.py
-pixi run -e dev python examples/constrained_planning/orientation_lock.py
+pixi run -e dev python examples/planning/constrained/plane.py
+pixi run -e dev python examples/planning/constrained/plane_with_obstacle.py
+pixi run -e dev python examples/planning/constrained/line_horizontal.py
+pixi run -e dev python examples/planning/constrained/line_vertical.py
+pixi run -e dev python examples/planning/constrained/orientation_lock.py
 ```
-
-### Plane constraint
-
-One holonomic equation: the left gripper's world `z` coordinate is
-pinned to its home value.  The 7-DOF arm has a 6-dimensional null
-space the planner can exploit; the gripper trajectory is
-*guaranteed* flat by construction.
-
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/constrained_plane.mp4" type="video/mp4">
-</video>
 
 ```python
 from fetch_planning.planning import Constraint, SymbolicContext, create_planner
 
-ctx = SymbolicContext("autolife_left_arm")
-p0 = ctx.evaluate_link_pose("Link_Left_Gripper", start)[:3, 3]
+ctx = SymbolicContext("fetch_arm")
+p0 = ctx.evaluate_link_pose("gripper_link", start)[:3, 3]
 
 plane = Constraint(
-    residual=ctx.link_translation("Link_Left_Gripper")[2] - float(p0[2]),
+    residual=ctx.link_translation("gripper_link")[2] - float(p0[2]),
     q_sym=ctx.q,
     name="plane_z",
 )
 
-planner = create_planner("autolife_left_arm", constraints=[plane])
+planner = create_planner("fetch_arm", constraints=[plane])
 ```
 
-### Plane constraint with obstacle
+---
 
-Same plane manifold as above, plus a red sphere planted on the swept
-arc — the classic end-effector-on-a-surface problem.  The planner
-curves the arm around the obstacle while the gripper keeps sliding
-flat on the plane.  Collision avoidance and equality constraint are
-handled by the same OMPL planner.
+## Cost-space Planning
 
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/constrained_plane_obstacle.mp4" type="video/mp4">
-</video>
+The soft counterpart: each demo under `examples/planning/cost/` mirrors
+the constrained version but feeds the squared residual as a scalar
+cost rather than a hard constraint.  RRT\* and the informed tree
+family integrate the cost along every motion.
 
-### Line constraint (horizontal rail)
-
-Stacked residual: two translation equations pin `y` and `z` to their
-home values, and six rotation-matrix equations lock the gripper's
-orientation.  That leaves `x` as the only free end-effector DOF, and
-the gripper slides along the rail without rolling or flipping.  On
-the 7-DOF arm the residual has rank 5, so the planner still has a
-2-D null space to curl the elbow around the arm's reach limits.
-
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/constrained_line_horizontal.mp4" type="video/mp4">
-</video>
-
-```python
-import casadi as ca
-
-left_pos = ctx.link_translation("Link_Left_Gripper")
-left_rot = ctx.link_rotation("Link_Left_Gripper")
-
-residual = ca.vertcat(
-    left_pos[1] - float(p0[1]),
-    left_pos[2] - float(p0[2]),
-    left_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
-    left_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
-)
-line = Constraint(residual=residual, q_sym=ctx.q, name="line_h")
+```bash
+pixi run -e dev python examples/planning/cost/plane.py
+pixi run -e dev python examples/planning/cost/plane_with_obstacle.py
+pixi run -e dev python examples/planning/cost/line_horizontal.py
+pixi run -e dev python examples/planning/cost/line_vertical.py
+pixi run -e dev python examples/planning/cost/orientation_lock.py
 ```
 
-### Line constraint (vertical rail)
+---
 
-Same idea with the free axis swapped — `x` and `y` are pinned, the
-rotation is locked, and only `z` is free.  The gripper slides
-cleanly up and down the yellow rail with a frozen orientation.
+## Time Parameterization
 
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/constrained_line_vertical.mp4" type="video/mp4">
-</video>
+Given a planned path, produce a time-stamped trajectory respecting
+per-joint velocity and acceleration limits via TOTG (Kunz-Stilman).
 
-### Orientation lock
-
-Six holonomic equations: the first two columns of the gripper's
-rotation matrix are pinned to their home values.  (The third column
-follows from orthonormality of SO(3), so the entire 3x3 rotation is
-locked.)  The residual is rank 3, leaving a 4-DOF null space — enough
-for the gripper to translate freely in `x`, `y`, `z` while its
-orientation stays frozen.
-
-<video controls autoplay loop muted playsinline width="100%">
-  <source src="../assets/constrained_orientation_lock.mp4" type="video/mp4">
-</video>
+```bash
+pixi run -e dev python examples/planning/time_parameterization.py
+```
 
 ```python
-R0 = ctx.evaluate_link_pose("Link_Left_Gripper", start)[:3, :3]
-left_rot = ctx.link_rotation("Link_Left_Gripper")
+from fetch_planning.trajectory import TimeOptimalParameterizer
 
-residual = ca.vertcat(
-    left_rot[:, 0] - ca.DM(R0[:, 0].tolist()),
-    left_rot[:, 1] - ca.DM(R0[:, 1].tolist()),
-)
-orient = Constraint(residual=residual, q_sym=ctx.q, name="orient_lock")
+param = TimeOptimalParameterizer(vel_limits, acc_limits)
+traj = param.parameterize(path)
+times, positions, velocities, accelerations = traj.sample_uniform(dt=0.01)
 ```
 
 ---
@@ -390,14 +324,11 @@ end-to-end, and pipes offscreen-rendered frames into ``ffmpeg`` via
 :class:`fetch_planning.utils.video_recorder.VideoRecorder`.
 
 ```bash
-# Render everything (≈10 minutes at 1280x720, CPU rendering):
+# Render everything:
 pixi run python scripts/render_videos/render_docs_videos.py
 
 # Render just one clip:
 pixi run python scripts/render_videos/render_docs_videos.py --only motion_planning
-
-# Render a subset (note the quotes):
-pixi run python scripts/render_videos/render_docs_videos.py --only "plane,line_h,line_v"
 ```
 
 Output lands in ``docs/assets/*.mp4`` — idempotent, no external
@@ -411,29 +342,19 @@ download or GPU required.
 
 | Chain | DOF | Description |
 |-------|-----|-------------|
-| `left_arm` | 7 | Shoulder to left wrist |
-| `right_arm` | 7 | Shoulder to right wrist |
-| `whole_body_left` | 11 | Ground vehicle to left wrist |
-| `whole_body_right` | 11 | Ground vehicle to right wrist |
-| `whole_body_base_left` | 14 | Zero point to left wrist (includes base) |
-| `whole_body_base_right` | 14 | Zero point to right wrist (includes base) |
-
-!!! tip "Shorthand"
-    Use `create_ik_solver("whole_body", side="left")` instead of
-    `create_ik_solver("whole_body_left")`.
+| `arm` | 7 | `torso_lift_link` → `gripper_link` |
+| `arm_with_torso` | 8 | `base_link` → `gripper_link` (torso + arm) |
+| `whole_body` | 11 | `base_link` → `gripper_link` (base + torso + arm) |
 
 ### Joint groups
 
-Indices into the full 24-DOF configuration:
+Indices into the full 11-DOF configuration:
 
 | Group | Indices | Joints |
 |-------|---------|--------|
-| `base` | 0–2 | Virtual_X, Virtual_Y, Virtual_Theta |
-| `legs` | 3–4 | Ankle, Knee |
-| `waist` | 5–6 | Waist Pitch, Yaw |
-| `left_arm` | 7–13 | Shoulder → Wrist (7 DOF) |
-| `neck` | 14–16 | Roll, Pitch, Yaw |
-| `right_arm` | 17–23 | Shoulder → Wrist (7 DOF) |
+| `base` | 0–2 | `base_x_joint`, `base_y_joint`, `base_theta_joint` |
+| `torso` | 3 | `torso_lift_joint` |
+| `arm` | 4–10 | `shoulder_pan_joint` → `wrist_roll_joint` (7 DOF) |
 
 ### IK solve types
 

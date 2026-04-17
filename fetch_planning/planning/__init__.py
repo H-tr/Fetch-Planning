@@ -1,4 +1,5 @@
 from .constraints import Constraint, SymbolicContext
+from .costs import Cost
 from .motion_planner import (
     MotionPlanner,
     MotionPlannerBase,
@@ -12,5 +13,6 @@ __all__ = [
     "available_robots",
     "create_planner",
     "Constraint",
+    "Cost",
     "SymbolicContext",
 ]

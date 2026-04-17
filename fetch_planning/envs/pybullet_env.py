@@ -114,7 +114,7 @@ class PyBulletEnv(BaseEnv):
                 break
 
         # Set initial pose
-        from fetch_planning.config.robot_config import HOME_JOINTS
+        from fetch_planning.fetch import HOME_JOINTS
 
         self.set_joint_states(HOME_JOINTS[3:])
 

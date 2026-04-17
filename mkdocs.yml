@@ -1,6 +1,6 @@
-site_name: Autolife Planning
+site_name: Fetch Planning
 site_url: https://h-tr.github.io/Fetch-Planning/
-site_description: Planning library for the Autolife robot — motion planning, inverse kinematics, and collision-aware planning.
+site_description: Planning library for the Fetch robot — motion planning, trajectory generation, inverse kinematics, and collision-aware planning.
 repo_url: https://github.com/H-tr/Fetch-Planning
 repo_name: H-tr/Fetch-Planning
 
@@ -41,6 +41,8 @@ theme:
 
 markdown_extensions:
   - admonition
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.highlight:
@@ -57,6 +59,10 @@ markdown_extensions:
   - md_in_html
   - toc:
       permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 plugins:
   - search
@@ -78,9 +84,16 @@ plugins:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Motion Planning:
+      - Overview: planning/index.md
+      - Subgroup planning: planning/subgroup.md
+      - Manifold planning: planning/manifold.md
+      - Cost-space planning: planning/cost.md
+      - Time parameterization: planning/trajectory.md
   - API Reference:
       - Kinematics: api/kinematics.md
       - Motion Planning: api/planning.md
+      - Trajectory: api/trajectory.md
       - Types: api/types.md
       - Configuration: api/config.md
       - Environments: api/environments.md

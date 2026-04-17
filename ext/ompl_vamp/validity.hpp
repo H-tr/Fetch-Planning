@@ -14,14 +14,16 @@
  *     configuration after expanding the subgroup via active_indices +
  *     frozen_config.
  *
- *  2. ``kCompound`` — a CompoundStateSpace of ReedsSheppStateSpace(ρ) +
- *     RealVectorStateSpace(active_dim_ − 3). Used when the active
- *     subgroup includes base joints (e.g. "fetch_base", "fetch_base_arm",
- *     "fetch_whole_body"). The SE(2) subspace carries (base_x, base_y,
- *     base_theta) and its built-in distance()/interpolate() enforces the
- *     nonholonomic constraint. State extraction reads SE(2) and the
- *     RealVector subspace separately, then concatenates them into a
- *     VAMP configuration in URDF order (base first, then arm).
+ *  2. ``kCompound`` — a CompoundStateSpace of a car-like SE(2) subspace
+ *     (``DubinsStateSpace`` or ``ReedsSheppStateSpace`` depending on the
+ *     ``allow_reverse`` flag) + RealVectorStateSpace(active_dim_ − 3).
+ *     Used when the active subgroup includes base joints (e.g.
+ *     "fetch_base", "fetch_base_arm", "fetch_whole_body"). The SE(2)
+ *     subspace carries (base_x, base_y, base_theta) and its built-in
+ *     distance()/interpolate() enforces the nonholonomic constraint.
+ *     State extraction reads SE(2) and the RealVector subspace separately,
+ *     then concatenates them into a VAMP configuration in URDF order
+ *     (base first, then arm).
  *
  * In all modes collision checking is delegated to VAMP's SIMD
  * ``validate_motion`` (resolution 1 for single states, full robot

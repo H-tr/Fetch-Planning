@@ -7,7 +7,6 @@ type checkers can resolve ``import fetch_planning._ompl_vamp``.
 """
 
 from collections.abc import Sequence
-from typing import overload
 
 class PlanResult:
     """Result of a single ``OmplVampPlanner.plan`` call."""
@@ -40,32 +39,55 @@ class PlanResult:
 class OmplVampPlanner:
     """OMPL planner with VAMP SIMD-accelerated collision checking.
 
-    Two construction modes:
+    Single construction mode — the Python wrapper decides which joints
+    are active and how many form the nonholonomic base:
 
-    * ``OmplVampPlanner()`` — full body, 24 DOF (3 base + 21 joints).
-    * ``OmplVampPlanner(active_indices, frozen_config)`` — subgroup
-      planner over the joints listed in ``active_indices``; the C++
-      collision checker injects ``frozen_config`` for every other slot
-      in the 24-DOF body on every state and motion validity query.
+    * ``OmplVampPlanner(active_indices, frozen_config, base_dim,
+      turning_radius, allow_reverse)``
+
+    The C++ collision checker injects ``frozen_config`` for every slot
+    in the 11-DOF whole-body state that is not listed in
+    ``active_indices`` before running every state or motion validity
+    query.
     """
 
-    @overload
-    def __init__(self) -> None:
-        """Create a full-body planner (24 DOF)."""
-        ...
-    @overload
     def __init__(
         self,
         active_indices: Sequence[int],
         frozen_config: Sequence[float],
+        base_dim: int = 0,
+        turning_radius: float = 0.2,
+        allow_reverse: bool = False,
     ) -> None:
         """Create a subgroup planner.
 
         Args:
-            active_indices: Positions in the full 24-DOF body that this
+            active_indices: Positions in the full-body config that this
                 planner will plan over, in DOF order.
-            frozen_config: 24-DOF stance to inject for every joint *not*
+            frozen_config: Full-body stance to inject for every joint *not*
                 in ``active_indices``.
+            base_dim: How many leading active indices form the
+                nonholonomic base (0 = arm-only, 3 = SE2 base).
+            turning_radius: Minimum turning radius in metres (ignored
+                when ``base_dim == 0``).
+            allow_reverse: Select the SE(2) base state space.  ``False``
+                (default) picks ``DubinsStateSpace`` (forward-only); ``True``
+                picks ``ReedsSheppStateSpace`` (reverse permitted).
+        """
+        ...
+    def set_base_bounds(
+        self,
+        x_lo: float,
+        x_hi: float,
+        y_lo: float,
+        y_hi: float,
+        theta_lo: float = ...,
+        theta_hi: float = ...,
+    ) -> None:
+        """Tighten the SE(2) base workspace bounds.
+
+        Rebuilds the underlying OMPL state space in place — call before
+        ``plan()``.  Only meaningful when ``base_dim > 0``.
         """
         ...
     def add_pointcloud(
@@ -77,6 +99,9 @@ class OmplVampPlanner:
     ) -> None:
         """Add a point cloud obstacle to the collision environment.
 
+        Multiple calls accumulate; the planner keeps every cloud handed
+        to it.
+
         Args:
             points: ``(N, 3)`` array of obstacle positions in world frame.
             r_min: Minimum robot collision-sphere radius (from
@@ -85,6 +110,15 @@ class OmplVampPlanner:
                 :meth:`min_max_radii`).
             point_radius: Inflation radius applied to every cloud point.
         """
+        ...
+    def remove_pointcloud(self) -> bool:
+        """Drop the most-recently-added pointcloud.
+
+        Returns ``False`` if there was none to remove.
+        """
+        ...
+    def has_pointcloud(self) -> bool:
+        """``True`` if at least one pointcloud is currently registered."""
         ...
     def add_sphere(self, center: Sequence[float], radius: float) -> None:
         """Add a single sphere obstacle (centre + radius) to the environment."""
@@ -115,6 +149,39 @@ class OmplVampPlanner:
     def num_constraints(self) -> int:
         """Number of constraints currently registered."""
         ...
+    def add_compiled_cost(
+        self,
+        so_path: str,
+        symbol_name: str,
+        ambient_dim: int,
+        weight: float = 1.0,
+    ) -> None:
+        """Load a CasADi-generated shared library as a soft path cost.
+
+        The cost is wrapped as an ``ompl::StateCostIntegralObjective`` —
+        trapezoidally integrated along every motion — and drives the
+        search of asymptotically-optimal planners (RRT*, BIT*, AIT*,
+        QRRT*, …).  Multiple costs are summed with their ``weight``.
+
+        For whole-body / base-including subgroups the cost is set on
+        the multilevel top SpaceInformation and combined with the
+        Dubins / Reeds-Shepp path-length term (which lives in the
+        state-space distance) — non-holonomic shaping is preserved.
+
+        Args:
+            so_path: Path to the compiled ``.so`` file.
+            symbol_name: CasADi function symbol name inside the library.
+            ambient_dim: Dimension of the joint space (must match
+                :meth:`dimension`).
+            weight: Non-negative scalar multiplier applied to the cost.
+        """
+        ...
+    def clear_costs(self) -> None:
+        """Drop every accumulated cost."""
+        ...
+    def num_costs(self) -> int:
+        """Number of costs currently registered."""
+        ...
     def plan(
         self,
         start: Sequence[float],
@@ -123,6 +190,8 @@ class OmplVampPlanner:
         time_limit: float = 10.0,
         simplify: bool = True,
         interpolate: bool = True,
+        interpolate_count: int = 0,
+        resolution: float = 64.0,
     ) -> PlanResult:
         """Plan a collision-free path from ``start`` to ``goal``.
 
@@ -134,21 +203,93 @@ class OmplVampPlanner:
             time_limit: Solver time limit in seconds.
             simplify: If true, run ``SimpleSetup::simplifySolution`` on the
                 returned path.
-            interpolate: If true, densify the simplified path with
-                ``PathGeometric::interpolate`` so the returned waypoints
-                are spaced at the longest valid segment fraction.
+            interpolate: If true, densify the simplified path.  Density
+                is picked by ``interpolate_count`` when it is ``> 0``,
+                otherwise by ``resolution`` when it is ``> 0``, otherwise
+                by OMPL's default longest-valid-segment fraction.
+            interpolate_count: Target total waypoint count for the whole
+                path.  OMPL distributes states across edges proportionally
+                to their length.  ``0`` disables this knob.  Cannot be
+                combined with ``resolution``.
+            resolution: Waypoints per unit of state-space distance.  Each
+                edge of length ``d`` is split into ``ceil(d * resolution)``
+                equal segments, so higher values give denser paths.
+                Default ``64.0``.  Set to ``0.0`` to fall back to OMPL's
+                default interpolator.  Cannot be combined with
+                ``interpolate_count``.
+        """
+        ...
+    def simplify_path(
+        self,
+        path: Sequence[Sequence[float]],
+        time_limit: float = 1.0,
+    ) -> list[list[float]]:
+        """Run OMPL's shortcut simplifier on a waypoint list.
+
+        Reuses the current collision environment and constraints.
+        Shortcuts only consult the motion validator, so custom soft
+        costs are ignored.  Returns the simplified path as waypoints.
+
+        Args:
+            path: ``(N, dimension())`` waypoint list.
+            time_limit: Simplifier wall-clock budget, seconds.
+        """
+        ...
+    def interpolate_path(
+        self,
+        path: Sequence[Sequence[float]],
+        count: int = 0,
+        resolution: float = 64.0,
+    ) -> list[list[float]]:
+        """Densify a waypoint list along its existing edges.
+
+        Pass at most one of ``count`` (exact total waypoints,
+        distributed by edge length) or ``resolution`` (waypoints per
+        unit of state-space distance).  Both zero falls back to OMPL's
+        default longest-valid-segment fraction.  No collision check is
+        performed — densification only calls ``StateSpace::interpolate``
+        on the existing edges, so the inserted waypoints stay on the
+        Dubins / Reeds-Shepp curve for compound base+arm paths.
+
+        Args:
+            path: ``(N, dimension())`` waypoint list.
+            count: Total waypoint count if > 0.
+            resolution: Waypoints per unit distance if > 0.0.
         """
         ...
     def validate(self, config: Sequence[float]) -> bool:
         """Return ``True`` if ``config`` is collision-free.
 
         ``config`` must have length :meth:`dimension`.  Subgroup
-        planners expand it to a full 24-DOF state with the stored
+        planners expand it to a full 11-DOF state with the stored
         ``frozen_config`` before checking.
         """
         ...
+    def validate_batch(
+        self,
+        configs: Sequence[Sequence[float]],
+    ) -> list[bool]:
+        """Batched collision check — deep SIMD, per-config result.
+
+        Packs up to ``rake`` distinct configurations into a single
+        VAMP ``ConfigurationBlock<rake>`` so one ``Robot::fkcc<rake>``
+        call sphere-FKs and collision-checks all of them
+        simultaneously — the same SIMD primitive the motion-edge
+        validator uses for interpolated samples, fed independent
+        configs per lane instead.
+
+        Returns one bool per input config in input order.  In the
+        common case (most configs valid) costs ``ceil(N / rake)``
+        SIMD calls; when a packed block fails, only that block falls
+        back to per-lane single-state checks.
+
+        Each ``configs[i]`` must have length :meth:`dimension`.
+        Subgroup planners expand each to a full 11-DOF state with
+        the stored ``frozen_config`` before packing.
+        """
+        ...
     def dimension(self) -> int:
-        """Number of active joints — 24 for the full body, smaller for subgroups."""
+        """Number of active joints — 11 for the full body, smaller for subgroups."""
         ...
     def lower_bounds(self) -> list[float]:
         """Per-joint lower bounds for the active DOFs."""
@@ -161,5 +302,50 @@ class OmplVampPlanner:
 
         Pass these to :meth:`add_pointcloud` so VAMP can index its
         broadphase correctly.
+        """
+        ...
+    def filter_pointcloud(
+        self,
+        points: Sequence[Sequence[float]],
+        min_dist: float,
+        max_range: float,
+        origin: Sequence[float],
+        workspace_min: Sequence[float],
+        workspace_max: Sequence[float],
+        cull: bool = True,
+    ) -> list[list[float]]:
+        """Morton-curve spatial down-sampling of a point cloud.
+
+        Keeps one representative point per ``min_dist`` neighbourhood
+        and discards points outside the AABB / range envelope.
+        """
+        ...
+    def filter_self_from_pointcloud(
+        self,
+        points: Sequence[Sequence[float]],
+        point_radius: float,
+        config: Sequence[float],
+    ) -> list[list[float]]:
+        """Remove points that collide with the robot body at ``config``
+        or with the registered environment."""
+        ...
+    def set_subgroup(
+        self,
+        active_indices: Sequence[int],
+        frozen_config: Sequence[float],
+        base_dim: int = 0,
+    ) -> None:
+        """Switch to a different subgroup without rebuilding the environment.
+
+        Clears all constraints and costs.  The pointcloud and
+        collision geometry are preserved.
+
+        Args:
+            active_indices: Positions in the full-body config that this
+                planner will plan over, in DOF order.
+            frozen_config: Full-body stance to inject for every joint *not*
+                in ``active_indices``.
+            base_dim: How many leading active indices form the
+                nonholonomic base (0 = arm-only, 3 = SE2 base).
         """
         ...

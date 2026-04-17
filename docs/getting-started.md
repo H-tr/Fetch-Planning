@@ -10,16 +10,16 @@
 Pre-built wheels are available for Python 3.10–3.12 on Linux x86_64. No local compilation required:
 
 ```bash
-pip install autolife-planning
+pip install fetch-planning
 ```
 
 ## Verify installation
 
 ```python
-from fetch_planning.config.robot_config import HOME_JOINTS
+from fetch_planning.fetch import HOME_JOINTS
 from fetch_planning.planning import create_planner
 
-planner = create_planner("autolife")
+planner = create_planner("fetch")
 goal = planner.sample_valid()
 result = planner.plan(HOME_JOINTS.copy(), goal)
 print(f"Planning {'succeeded' if result.success else 'failed'}")
@@ -35,8 +35,8 @@ bash scripts/build_wheels.sh
 
 This uses Docker with the `manylinux_2_28` image to produce portable Linux wheels. The output goes to `dist/wheels/`. It builds:
 
-- **autolife-vamp** — Version-specific wheels for Python 3.10, 3.11, 3.12
-- **autolife-planning** — Pure Python wheel (works on any Python 3.10+)
+- **fetch-vamp** — Version-specific wheels for Python 3.10, 3.11, 3.12
+- **fetch-planning** — Pure Python wheel (works on any Python 3.10+)
 
 Requirements: Docker must be installed and running.
 

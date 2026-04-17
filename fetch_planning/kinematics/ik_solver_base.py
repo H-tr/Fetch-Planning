@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from fetch_planning.config.robot_config import CHAIN_CONFIGS
+from fetch_planning.fetch import CHAIN_CONFIGS
 from fetch_planning.types import (
     ChainConfig,
     IKConfig,
