@@ -22,3 +22,7 @@ cmake.build-type = "Release"
 
 [project.optional-dependencies]
 dev = ["pre-commit", "pybullet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

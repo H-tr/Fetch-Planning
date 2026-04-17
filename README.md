@@ -28,10 +28,7 @@ Fetch. The key differences from a "default Fetch in VAMP" setup are:
 3. **IKFast backend** — in addition to TRAC-IK and Pink, Fetch-Planning
    ships a pre-generated OpenRAVE `ikfast` analytic solver for Fetch's
    8-DOF `arm_with_torso` chain. IKFast gives ~40 µs / solve and dense
-   null-space sweeps, which the `grasp_anywhere` sampler exploits.
-4. **`grasp_anywhere` module** — samples grasp poses on a sphere around a
-   target object, solves IK from each, returns reachable grasps. Ported
-   from [grasp_anywhere_v1](https://github.com/H-tr/mobile_grasping_uncertainty).
+   null-space sweeps.
 
 Everything else — the public API (`create_ik_solver`, `create_planner`,
 `SE3Pose`, `PlannerConfig`, `IKConfig`, constrained planning via CasADi),
@@ -118,7 +115,7 @@ Planning subgroups (`fetch_planning.fetch.PLANNING_SUBGROUPS`):
 
 This repo is being built up in phases. See the [issue tracker](https://github.com/H-tr/Fetch-Planning/issues) for task status.
 
-### Phase 1 — scaffold & public API  ✅ in progress
+### Phase 1 — scaffold & public API  ✅
 
 - [x] Copy Autolife-Planning structure, rename to `fetch_planning/`
 - [x] Rewrite `fetch.py` for the Fetch 11-DOF layout
@@ -126,67 +123,72 @@ This repo is being built up in phases. See the [issue tracker](https://github.co
       `fetch_planning/resources/robot/fetch/`
 - [x] `CMakeLists.txt` wired for the three extensions:
       `_ompl_vamp`, `pytracik`, `ikfast_fetch`
-- [ ] Public entry points (`create_planner`, `create_ik_solver`)
-      importable without errors (requires submodules)
+- [x] Public entry points (`create_planner`, `create_ik_solver`)
+      importable without errors
 
-### Phase 2 — VAMP submodule with whole-body Fetch
+### Phase 2 — whole-body Fetch VAMP model  ✅
 
-- [ ] On `H-tr/vamp`, create branch `fetch-planning` from `main`
-- [ ] Add `src/impl/vamp/robots/fetch_whole_body.hh` — an 11-DOF
+VAMP stays pinned to upstream; the Fetch-specific spherized models live
+alongside the OMPL bridge, not in a fork.
+
+- [x] `ext/ompl_vamp/include/vamp/robots/fetch_whole_body.hh` — 11-DOF
       spherized Fetch model whose `sphere_fk` applies the `(x, y, θ)`
       base transform before the arm FK. Mirrors the pattern used by
       `autolife_body_coupled.hh`.
-- [ ] Push branch; wire as `third_party/vamp` submodule pinned to
-      `fetch-planning`.
+- [x] `ext/ompl_vamp/include/vamp/robots/fetch_base.hh` — 3-DOF base-only
+      spherized model for base-only planning subgroups.
+- [x] `third_party/vamp` pinned to upstream `H-tr/vamp@main` (no fork).
 
-### Phase 3 — OMPL frontend adaptations
+### Phase 3 — OMPL frontend adaptations  ✅
 
-- [ ] `ext/ompl_vamp/validity.hpp`: swap `vamp::robots::Autolife` for
-      `vamp::robots::FetchWholeBody`; extend `extract_real_state` to
-      handle `CompoundStateType` when the base is part of the active
-      subgroup.
-- [ ] `ext/ompl_vamp/planner.hpp`: when `active_indices` include any
-      base joint, construct `CompoundStateSpace(ReedsSheppStateSpace(ρ) +
-      RealVectorStateSpace(N))` instead of a plain `RealVectorStateSpace`.
-      ReedsSheppStateSpace's built-in distance/interpolate functions make
-      any OMPL planner respect the nonholonomic constraint for free.
-- [ ] Motion validator for the compound space: reads the base state via
+- [x] `ext/ompl_vamp/validity.hpp`: uses `vamp::robots::FetchWholeBody`;
+      `extract_real_state` handles `CompoundStateType` when the base is
+      part of the active subgroup.
+- [x] `ext/ompl_vamp/planner.hpp`: when `active_indices` include any
+      base joint, constructs `CompoundStateSpace(SE2StateSpace(ρ) +
+      RealVectorStateSpace(N))` where the SE2 component is either
+      `DubinsStateSpace` (forward-only, default) or `ReedsSheppStateSpace`
+      (reverse allowed). Both inherit from `SE2StateSpace`, so OMPL's
+      built-in distance/interpolate functions make every planner respect
+      the nonholonomic constraint for free.
+- [x] Motion validator for the compound space: reads the base state via
       `state->as<CompoundState>()->as<SE2StateSpace::StateType>(0)`, the
       arm state via `...->as<RealVectorStateSpace::StateType>(1)`, packs
       both into a `FetchWholeBody::Configuration`, and calls VAMP.
 
-### Phase 4 — IK backends
+### Phase 4 — IK backends  ✅
 
 - [x] Vendor
       [`ikfast_fetch_module.cpp`](ext/ikfast_fetch/ikfast_fetch_module.cpp)
-      from `grasp_anywhere_v1` (8-DOF `Transform6D`, free params =
-      `torso_lift` + `upperarm_roll`)
+      (8-DOF `Transform6D`, free params = `torso_lift` + `upperarm_roll`)
 - [x] `fetch_planning/kinematics/ikfast_solver.py` implementing
       `IKSolverBase` with a seed-aware random-restart sampler over the
       two free parameters
 - [x] `create_ik_solver(backend="ikfast")` factory route
-- [ ] Keep `trac_ik` + `pink` backends working on Fetch chains
+- [x] `trac_ik` + `pink` backends working on Fetch chains
       (`arm`, `arm_with_torso`, `whole_body`)
 
-### Phase 5 — grasp_anywhere module
+### Phase 5 — examples, build, ship  ✅
 
-- [ ] Port `grasp_anywhere_v1/grasp_anywhere/samplers/prepose_sampler.py`
-      as `fetch_planning/grasping/grasp_anywhere.py`: uniform sphere
-      sampling around a target, IK check (ikfast-backed), collision
-      check via the motion planner's validator
-- [ ] Public entry point:
-      `grasp_anywhere(target_position, *, num_samples, radius, ik_backend="ikfast") -> list[GraspCandidate]`
-- [ ] Example: `examples/grasp_anywhere_example.py`
-
-### Phase 6 — examples, build, ship
-
-- [ ] `examples/ik_example.py` — Fetch arm FK/IK round-trip for each of
-      the 3 backends
-- [ ] `examples/motion_planning_example.py` — `fetch_arm` planning over a
+- [x] `examples/ik/basic.py` + `basic_vis.py` + `trac_ik_vis.py` — Fetch
+      arm FK/IK round-trip for each backend
+- [x] `examples/planning/motion.py` — `fetch_arm` planning over a
       table pointcloud
-- [ ] `examples/whole_body_planning_example.py` — `fetch_whole_body`
+- [x] `examples/planning/nonholonomic.py` — `fetch_whole_body`
       nonholonomic base + arm motion around obstacles
-- [ ] `pixi run build` succeeds end-to-end; examples run
+- [x] `examples/planning/{subgroup,multilevel_single_step,time_parameterization}.py`,
+      `examples/planning/constrained/`, `examples/planning/cost/`,
+      `examples/ik/constrained*.py` — constrained / cost / multilevel
+      parity with Autolife-Planning
+- [x] `pixi run build` succeeds end-to-end; examples run
+
+### Phase 6 — testing & CI  ✅
+
+- [x] `tests/` smoke-test suite covering public entry points on every
+      Fetch chain and every installed IK backend
+- [x] GitHub Actions workflow (`.github/workflows/test.yml`) that
+      installs pixi, builds the native extensions, and runs the smoke
+      tests on every push and PR
 
 ---
 
@@ -233,7 +235,7 @@ Fetch-Planning/
 ├── CMakeLists.txt              # three extensions: _ompl_vamp, pytracik, ikfast_fetch
 ├── pyproject.toml              # scikit-build-core
 ├── pixi.toml                   # conda env + build tasks
-├── .gitmodules                 # vamp@fetch-planning, ompl
+├── .gitmodules                 # vamp, ompl, cricket, foam
 │
 ├── fetch_planning/             # Python package (mirrors autolife_planning/)
 │   ├── fetch.py                # 11-DOF Fetch layout (joint groups, HOME, …)
@@ -241,17 +243,21 @@ Fetch-Planning/
 │   ├── trajectory/             # TOTG time parameterization
 │   ├── kinematics/             # TracIK / Pink / IKFast solvers + factory
 │   ├── planning/               # MotionPlanner, SymbolicContext, Constraint
-│   ├── grasping/               # grasp_anywhere sampler  [Phase 5]
 │   ├── envs/                   # PyBullet scene wrapper
 │   └── resources/robot/fetch/  # fetch.urdf + fetch_spherized.urdf + meshes
 │
 ├── ext/
 │   ├── ompl_vamp/              # nanobind OMPL↔VAMP bridge
+│   │   └── include/vamp/robots/
+│   │        ├── fetch_whole_body.hh  # 11-DOF spherized Fetch (base+torso+arm)
+│   │        └── fetch_base.hh        # 3-DOF base-only spherized Fetch
 │   ├── trac_ik/                # vendored TRAC-IK C++ (pybind11)
 │   └── ikfast_fetch/           # ikfast_fetch_module.cpp — OpenRAVE analytic IK
 │
+├── tests/                      # pytest smoke tests (chains × backends)
+│
 └── third_party/
-    ├── vamp/                   # H-tr/vamp @ fetch-planning branch
+    ├── vamp/                   # H-tr/vamp @ main (unmodified upstream)
     └── ompl/                   # ompl/ompl (upstream)
 ```
 
@@ -269,11 +275,26 @@ Pixi handles all of this — `pixi install` then `pixi run build`.
 
 ---
 
+## Testing
+
+Smoke tests live under `tests/` and exercise the public entry points
+(`create_ik_solver`, `create_planner`) across every Fetch chain and every
+installed IK backend. Run them locally with:
+
+```bash
+pixi run test
+```
+
+The `.github/workflows/test.yml` action runs the same suite on every push
+and pull request against `main`.
+
+---
+
 ## License & attribution
 
 - The `ikfast_fetch` analytic solver is generated by OpenRAVE's `ikfast`
-  (Apache 2.0, © Rosen Diankov) and originally produced for the
-  `grasp_anywhere_v1` codebase.
-- VAMP is from the KavrakiLab (BSD); we use the H-tr fork for the
-  whole-body Fetch model on the `fetch-planning` branch.
+  (Apache 2.0, © Rosen Diankov).
+- VAMP is from the KavrakiLab (BSD); we pin `third_party/vamp` to
+  upstream unmodified and keep the Fetch-specific spherized models under
+  `ext/ompl_vamp/include/vamp/robots/`.
 - Everything else © 2026 H-tr, same license as Autolife-Planning.
