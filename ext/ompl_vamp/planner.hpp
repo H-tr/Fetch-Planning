@@ -309,7 +309,8 @@ class OmplVampPlanner {
       }
       if (planner_name == "decomposed") {
         return plan_decomposed_wrapper(start, goal, time_limit, simplify,
-                                       interpolate);
+                                       interpolate, interpolate_count,
+                                       resolution);
       }
       return plan_multilevel(start, goal, planner_name, time_limit, simplify,
                              interpolate, interpolate_count, resolution);
@@ -1041,19 +1042,22 @@ class OmplVampPlanner {
 
   // ── Decomposed planning (base roadmap + layered arm scheduler) ────
   //
-  // Adapter around ``plan_decomposed`` (plan_decomposed.hpp).  The
-  // decomposed planner already returns a ready-to-use sequence of
-  // active-subgroup configurations sampled at the base-resample
-  // density, so ``simplify`` / ``interpolate`` are no-ops here — the
-  // path is already dense in the 11-D active space.  (If callers ever
-  // want to trim waypoints, shortcut-smoothing should run on the
-  // reconstructed PathGeometric, not on the layered DAG output, so we
-  // leave that for a follow-up.)
+  // Adapter around ``plan_decomposed`` (plan_decomposed.hpp).  The raw
+  // output is one active-config per base layer (``M`` ≈ 48 waypoints):
+  // the base subspace jumps along RS-curve chord points and the arm
+  // subspace jumps from one Dijkstra-chosen layer config to the next.
+  // For direct playback that's too coarse — the arm appears to teleport
+  // between layers.  When ``interpolate`` is set we rebuild the path as
+  // a compound-space ``PathGeometric`` and densify it so base samples
+  // stay on the RS curve and arm samples linearly interpolate between
+  // adjacent layers, matching the output granularity of
+  // ``plan_multilevel`` / ``plan_geometric``.
 
   auto plan_decomposed_wrapper(const std::vector<double> &start,
                                const std::vector<double> &goal,
                                double time_limit, bool /*simplify*/,
-                               bool /*interpolate*/) -> PlanResult {
+                               bool interpolate, int interpolate_count = 0,
+                               double resolution = 64.0) -> PlanResult {
     std::array<double, 4> base_xy_bounds{base_x_lo_, base_x_hi_, base_y_lo_,
                                          base_y_hi_};
     DecomposedConfig cfg{};
@@ -1064,11 +1068,34 @@ class OmplVampPlanner {
     PlanResult out;
     out.solved = r.solved;
     out.planning_time_ns = r.planning_time_ns;
-    if (r.solved) {
-      out.path = std::move(r.path);
-      out.path_cost = r.path_cost;
-    } else {
+    if (!r.solved) {
       out.path_cost = std::numeric_limits<double>::infinity();
+      return out;
+    }
+    out.path_cost = r.path_cost;
+
+    if (!interpolate || r.path.size() < 2) {
+      out.path = std::move(r.path);
+      return out;
+    }
+
+    auto si_compound = std::make_shared<ob::SpaceInformation>(space_);
+    og::PathGeometric path(si_compound);
+    for (const auto &cfg_i : r.path) {
+      ob::ScopedState<> s(space_);
+      write_scoped_state(s, cfg_i);
+      path.append(s.get());
+    }
+    if (interpolate_count > 0) {
+      path.interpolate(static_cast<unsigned int>(interpolate_count));
+    } else if (resolution > 0.0) {
+      densify_by_resolution(path, space_, resolution);
+    } else {
+      path.interpolate();
+    }
+    out.path.reserve(path.getStateCount());
+    for (std::size_t i = 0; i < path.getStateCount(); ++i) {
+      out.path.push_back(read_state(path.getState(i)));
     }
     return out;
   }

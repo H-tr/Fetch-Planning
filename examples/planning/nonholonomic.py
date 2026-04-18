@@ -56,6 +56,8 @@ SCENE_PROPS: list[tuple[str, str]] = [
 ]
 
 GRIPPER_LINK = "gripper_link"
+LEFT_FINGER_LINK = "l_gripper_finger_link"
+RIGHT_FINGER_LINK = "r_gripper_finger_link"
 
 # ── Robot base poses (x, y, theta) ────────────────────────────────────
 
@@ -111,7 +113,12 @@ PLACE2_GRASP = np.array([0.33615000, 0.03522638, 1.06906802, 1.89672008,
 # Override with --nav_time=… on the command line.
 NAV_TIME = 0.5
 ARM_TIME = 1.0
+# Lowered torso for tuck/navigation legs so the gripper doesn't float
+# too high above the robot while the arm is folded — purely cosmetic,
+# the grasp stages still unfold the torso to the pre-computed height.
+TUCK_TORSO = 0.10
 TUCK_ARM = HOME_JOINTS[3:].copy()
+TUCK_ARM[0] = TUCK_TORSO
 BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
 
 
@@ -190,6 +197,24 @@ def capture_local_transform(env: PyBulletEnv, link_idx: int, body_id: int) -> np
     local[:3, :3] = lR.T @ oR
     local[:3, 3] = lR.T @ (np.asarray(op) - lp)
     return local
+
+
+def snap_to_tcp_and_capture(
+    env: PyBulletEnv, gripper_link_idx: int, body_id: int,
+) -> np.ndarray:
+    """Teleport ``body_id`` to the fingertip midpoint (TCP) at the current
+    configuration, then return its local transform in the gripper-link
+    frame.  This makes the attached body follow the true pinch point
+    during carry rather than an arbitrary IK-residual offset."""
+    client = env.sim.client
+    lf = find_link_index(env, LEFT_FINGER_LINK)
+    rf = find_link_index(env, RIGHT_FINGER_LINK)
+    lp = np.asarray(client.getLinkState(env.sim.skel_id, lf)[0])
+    rp = np.asarray(client.getLinkState(env.sim.skel_id, rf)[0])
+    tcp = 0.5 * (lp + rp)
+    _, oq = client.getBasePositionAndOrientation(body_id)
+    client.resetBasePositionAndOrientation(body_id, tcp.tolist(), list(oq))
+    return capture_local_transform(env, gripper_link_idx, body_id)
 
 
 def apply_attachment(env: PyBulletEnv, link_idx: int, body_id: int, local_tf: np.ndarray) -> None:
@@ -350,7 +375,7 @@ def main(
 
     env.set_configuration(grasp1)
     client.resetBasePositionAndOrientation(apple_id, APPLE_ON_TABLE.tolist(), [0, 0, 0, 1])
-    apple_tf = capture_local_transform(env, gripper_link, apple_id)
+    apple_tf = snap_to_tcp_and_capture(env, gripper_link, apple_id)
 
     lift = _linear_path(grasp1, pregrasp1, steps=30)
     segments.append(Segment(path=lift, attach_body_id=apple_id,
@@ -433,7 +458,7 @@ def main(
 
     env.set_configuration(grasp2)
     client.resetBasePositionAndOrientation(apple_id, APPLE_PLACE_SPOT.tolist(), [0, 0, 0, 1])
-    apple_tf2 = capture_local_transform(env, gripper_link, apple_id)
+    apple_tf2 = snap_to_tcp_and_capture(env, gripper_link, apple_id)
 
     lift2 = _linear_path(grasp2, pregrasp2, steps=30)
     segments.append(Segment(path=lift2, attach_body_id=apple_id,
