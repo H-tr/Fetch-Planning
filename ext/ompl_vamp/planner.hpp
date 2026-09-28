@@ -46,6 +46,7 @@
 #include <ompl/multilevel/planners/qmp/QMPStar.h>
 #include <ompl/multilevel/planners/qrrt/QRRT.h>
 #include <ompl/multilevel/planners/qrrt/QRRTStar.h>
+
 #include <cmath>
 
 #include "compiled_constraint.hpp"
@@ -170,10 +171,8 @@ class OmplVampPlanner {
   ///     ``ReedsSheppStateSpace`` (shortest-of-48 curves, reverse
   ///     allowed when geometrically shorter).
   OmplVampPlanner(std::vector<int> active_indices,
-                  std::vector<double> frozen_config,
-                  int base_dim = 0,
-                  double turning_radius = 0.2,
-                  bool allow_reverse = false)
+                  std::vector<double> frozen_config, int base_dim = 0,
+                  double turning_radius = 0.2, bool allow_reverse = false)
       : active_dim_(static_cast<int>(active_indices.size())),
         active_indices_(std::move(active_indices)),
         base_dim_(base_dim),
@@ -201,11 +200,11 @@ class OmplVampPlanner {
     build_state_space();
   }
 
-  void add_pointcloud(const std::vector<std::array<float, 3>> &points,
+  void add_pointcloud(const std::vector<std::array<float, 3>>& points,
                       float r_min, float r_max, float point_radius) {
     std::vector<vamp::collision::Point> pts;
     pts.reserve(points.size());
-    for (const auto &p : points) pts.push_back({p[0], p[1], p[2]});
+    for (const auto& p : points) pts.push_back({p[0], p[1], p[2]});
     float_env_.pointclouds.emplace_back(pts, r_min, r_max, point_radius);
     sync_env();
   }
@@ -223,7 +222,7 @@ class OmplVampPlanner {
     return !float_env_.pointclouds.empty();
   }
 
-  void add_sphere(const std::array<float, 3> &center, float radius) {
+  void add_sphere(const std::array<float, 3>& center, float radius) {
     float_env_.spheres.emplace_back(vamp::collision::Sphere<float>{
         center[0], center[1], center[2], radius});
     float_env_.sort();
@@ -237,8 +236,8 @@ class OmplVampPlanner {
 
   // ── Constraint API ────────────────────────────────────────────────
 
-  void add_compiled_constraint(const std::string &so_path,
-                               const std::string &symbol_name,
+  void add_compiled_constraint(const std::string& so_path,
+                               const std::string& symbol_name,
                                unsigned int ambient_dim, unsigned int co_dim) {
     if (static_cast<int>(ambient_dim) != active_dim_) {
       throw std::invalid_argument(
@@ -272,8 +271,8 @@ class OmplVampPlanner {
   // Multiple costs are summed via MultiOptimizationObjective with
   // the weights supplied at add time.
 
-  void add_compiled_cost(const std::string &so_path,
-                         const std::string &symbol_name,
+  void add_compiled_cost(const std::string& so_path,
+                         const std::string& symbol_name,
                          unsigned int ambient_dim, double weight) {
     if (static_cast<int>(ambient_dim) != active_dim_) {
       throw std::invalid_argument(
@@ -297,7 +296,7 @@ class OmplVampPlanner {
   std::size_t num_costs() const { return cost_libs_.size(); }
 
   auto plan(std::vector<double> start, std::vector<double> goal,
-            const std::string &planner_name, double time_limit, bool simplify,
+            const std::string& planner_name, double time_limit, bool simplify,
             bool interpolate, int interpolate_count = 0,
             double resolution = 64.0) -> PlanResult {
     if (has_base_) {
@@ -346,7 +345,7 @@ class OmplVampPlanner {
   // Subgroup planners expand each reduced-DOF config to the full body
   // via the stored frozen pose before packing, mirroring
   // ``validate(...)``.
-  auto validate_batch(const std::vector<std::vector<double>> &configs)
+  auto validate_batch(const std::vector<std::vector<double>>& configs)
       -> std::vector<bool> {
     const std::size_t n = configs.size();
     std::vector<bool> result(n, false);
@@ -369,12 +368,11 @@ class OmplVampPlanner {
         std::array<float, Robot::dimension * kRake>
             blk_buf{};
 
-    auto write_lane = [&](std::size_t lane, const std::vector<double> &cfg) {
+    auto write_lane = [&](std::size_t lane, const std::vector<double>& cfg) {
       for (std::size_t d = 0; d < Robot::dimension; ++d)
         blk_buf[d * kRake + lane] = frozen_config_[d];
       for (std::size_t k = 0; k < active_indices_.size(); ++k)
-        blk_buf[active_indices_[k] * kRake + lane] =
-            static_cast<float>(cfg[k]);
+        blk_buf[active_indices_[k] * kRake + lane] = static_cast<float>(cfg[k]);
     };
 
     for (std::size_t i = 0; i < n; i += kRake) {
@@ -419,7 +417,7 @@ class OmplVampPlanner {
   // ignored.  For constrained/cost planners, prefer
   // ``plan(simplify=False)`` and leave the path untouched unless you've
   // explicitly decided shortcut shaping is acceptable.
-  auto simplify_path(const std::vector<std::vector<double>> &path,
+  auto simplify_path(const std::vector<std::vector<double>>& path,
                      double time_limit) -> std::vector<std::vector<double>> {
     if (path.size() < 2) return path;
     const bool constrained = !constraints_.empty();
@@ -443,7 +441,7 @@ class OmplVampPlanner {
   // base+arm paths the SE(2) interpolator stays on the Dubins / Reeds-
   // Shepp curve, so the inserted waypoints respect the nonholonomic
   // constraint.
-  auto interpolate_path(const std::vector<std::vector<double>> &path, int count,
+  auto interpolate_path(const std::vector<std::vector<double>>& path, int count,
                         double resolution) -> std::vector<std::vector<double>> {
     if (count > 0 && resolution > 0.0) {
       throw std::invalid_argument(
@@ -471,11 +469,11 @@ class OmplVampPlanner {
   // ── Point cloud filtering ───────────────────────────────────────
 
   /// Spatial down-sampling via Morton-curve sorting.
-  auto filter_pointcloud(const std::vector<std::array<float, 3>> &points,
+  auto filter_pointcloud(const std::vector<std::array<float, 3>>& points,
                          float min_dist, float max_range,
-                         const std::array<float, 3> &origin,
-                         const std::array<float, 3> &workspace_min,
-                         const std::array<float, 3> &workspace_max, bool cull)
+                         const std::array<float, 3>& origin,
+                         const std::array<float, 3>& workspace_min,
+                         const std::array<float, 3>& workspace_max, bool cull)
       -> std::vector<std::array<float, 3>> {
     vamp::collision::Point o{origin[0], origin[1], origin[2]};
     vamp::collision::Point ws_min{workspace_min[0], workspace_min[1],
@@ -485,21 +483,21 @@ class OmplVampPlanner {
 
     std::vector<vamp::collision::Point> pc;
     pc.reserve(points.size());
-    for (const auto &p : points) pc.push_back({p[0], p[1], p[2]});
+    for (const auto& p : points) pc.push_back({p[0], p[1], p[2]});
 
     auto filtered = vamp::collision::filter_pointcloud(pc, min_dist, max_range,
                                                        o, ws_min, ws_max, cull);
 
     std::vector<std::array<float, 3>> out;
     out.reserve(filtered.size());
-    for (const auto &p : filtered) out.push_back({p[0], p[1], p[2]});
+    for (const auto& p : filtered) out.push_back({p[0], p[1], p[2]});
     return out;
   }
 
   /// Remove points that collide with the robot body or the environment.
   auto filter_self_from_pointcloud(
-      const std::vector<std::array<float, 3>> &points, float point_radius,
-      const std::vector<double> &config) -> std::vector<std::array<float, 3>> {
+      const std::vector<std::array<float, 3>>& points, float point_radius,
+      const std::vector<double>& config) -> std::vector<std::array<float, 3>> {
     if (static_cast<int>(config.size()) != active_dim_) {
       throw std::invalid_argument(
           std::string("filter_self_from_pointcloud: config length ") +
@@ -517,7 +515,7 @@ class OmplVampPlanner {
     std::vector<std::array<float, 3>> out;
     out.reserve(points.size());
 
-    for (const auto &pt : points) {
+    for (const auto& pt : points) {
       const float x = pt[0], y = pt[1], z = pt[2], r = point_radius;
       bool valid = true;
       for (std::size_t i = 0; i < Robot::n_spheres; ++i) {
@@ -630,7 +628,7 @@ class OmplVampPlanner {
 
   // Expand an active-DOF config into a full-body VAMP Configuration,
   // injecting the frozen pose for joints outside ``active_indices_``.
-  auto build_full_config_(const std::vector<double> &config) const
+  auto build_full_config_(const std::vector<double>& config) const
       -> Robot::Configuration {
     alignas(Robot::Configuration::S::Alignment)
         std::array<float, Robot::Configuration::num_scalars_rounded>
@@ -681,18 +679,18 @@ class OmplVampPlanner {
   // allocated from ``active_space`` (possibly a ProjectedStateSpace
   // wrapper) and populated via the same layout ``write_scoped_state``
   // uses for ``plan()`` start/goal states.
-  auto waypoints_to_path_(const std::vector<std::vector<double>> &waypoints,
-                          const ob::SpaceInformationPtr &si,
-                          const ob::StateSpacePtr &active_space)
+  auto waypoints_to_path_(const std::vector<std::vector<double>>& waypoints,
+                          const ob::SpaceInformationPtr& si,
+                          const ob::StateSpacePtr& active_space)
       -> og::PathGeometric {
     og::PathGeometric path(si);
-    for (const auto &w : waypoints) {
+    for (const auto& w : waypoints) {
       if (static_cast<int>(w.size()) != active_dim_) {
         throw std::invalid_argument(
             std::string("Waypoint dimension ") + std::to_string(w.size()) +
             " does not match active DOF " + std::to_string(active_dim_) + ".");
       }
-      auto *s = active_space->allocState();
+      auto* s = active_space->allocState();
       write_state_ptr_(s, w);
       path.append(s);
       active_space->freeState(s);
@@ -703,7 +701,7 @@ class OmplVampPlanner {
   // Flatten a PathGeometric back into the waypoint list the Python side
   // expects.  Shares the state-layout decoding with ``read_state`` so
   // SE(2) and compound base+arm paths round-trip correctly.
-  auto path_to_waypoints_(const og::PathGeometric &path)
+  auto path_to_waypoints_(const og::PathGeometric& path)
       -> std::vector<std::vector<double>> {
     std::vector<std::vector<double>> out;
     out.reserve(path.getStateCount());
@@ -716,21 +714,20 @@ class OmplVampPlanner {
   // Populate a raw ``ob::State*`` from an active-DOF waypoint.
   // Mirrors ``write_scoped_state`` but accepts a state pointer allocated
   // from the (possibly wrapped) active_space.
-  void write_state_ptr_(ob::State *s, const std::vector<double> &config) const {
-    auto *target = s;
-    if (auto *wrapper =
-            dynamic_cast<ob::WrapperStateSpace::StateType *>(s)) {
+  void write_state_ptr_(ob::State* s, const std::vector<double>& config) const {
+    auto* target = s;
+    if (auto* wrapper = dynamic_cast<ob::WrapperStateSpace::StateType*>(s)) {
       target = wrapper->getState();
     }
     if (base_only_) {
-      auto *se2 = target->as<ob::SE2StateSpace::StateType>();
+      auto* se2 = target->as<ob::SE2StateSpace::StateType>();
       se2->setX(config[0]);
       se2->setY(config[1]);
       se2->setYaw(config[2]);
     } else if (has_base_) {
-      auto *compound = target->as<ob::CompoundStateSpace::StateType>();
-      auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
-      auto *rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
+      auto* compound = target->as<ob::CompoundStateSpace::StateType>();
+      auto* se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      auto* rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
       se2->setX(config[0]);
       se2->setY(config[1]);
       se2->setYaw(config[2]);
@@ -738,7 +735,7 @@ class OmplVampPlanner {
         rv->values[i - base_dim_] = config[i];
       }
     } else {
-      auto *rv = target->as<ob::RealVectorStateSpace::StateType>();
+      auto* rv = target->as<ob::RealVectorStateSpace::StateType>();
       for (int i = 0; i < active_dim_; ++i) rv->values[i] = config[i];
     }
   }
@@ -747,26 +744,26 @@ class OmplVampPlanner {
   // into ``ceil(d * resolution)`` equal segments.  Uses
   // ``StateSpace::interpolate`` so the inserted states stay on any
   // non-linear metric (Dubins / Reeds-Shepp SE(2), projected manifold).
-  static void densify_by_resolution(og::PathGeometric &path,
-                                    const ob::StateSpacePtr &stsp,
+  static void densify_by_resolution(og::PathGeometric& path,
+                                    const ob::StateSpacePtr& stsp,
                                     double resolution) {
-    auto &states = path.getStates();
+    auto& states = path.getStates();
     if (states.size() < 2) return;
-    std::vector<ob::State *> snap;
+    std::vector<ob::State*> snap;
     snap.reserve(states.size());
-    for (auto *s : states) {
-      auto *c = stsp->allocState();
+    for (auto* s : states) {
+      auto* c = stsp->allocState();
       stsp->copyState(c, s);
       snap.push_back(c);
     }
-    for (auto *s : states) stsp->freeState(s);
+    for (auto* s : states) stsp->freeState(s);
     states.clear();
     states.push_back(snap.front());
     for (std::size_t i = 1; i < snap.size(); ++i) {
       double d = stsp->distance(snap[i - 1], snap[i]);
       int n = std::max(1, static_cast<int>(std::ceil(d * resolution)));
       for (int k = 1; k < n; ++k) {
-        auto *tmp = stsp->allocState();
+        auto* tmp = stsp->allocState();
         stsp->interpolate(snap[i - 1], snap[i], static_cast<double>(k) / n,
                           tmp);
         states.push_back(tmp);
@@ -847,17 +844,17 @@ class OmplVampPlanner {
     }
   }
 
-  void write_scoped_state(ob::ScopedState<> &state,
-                          const std::vector<double> &config) const {
+  void write_scoped_state(ob::ScopedState<>& state,
+                          const std::vector<double>& config) const {
     if (base_only_) {
-      auto *se2 = state.get()->as<ob::SE2StateSpace::StateType>();
+      auto* se2 = state.get()->as<ob::SE2StateSpace::StateType>();
       se2->setX(config[0]);
       se2->setY(config[1]);
       se2->setYaw(config[2]);
     } else if (has_base_) {
-      auto *compound = state.get()->as<ob::CompoundStateSpace::StateType>();
-      auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
-      auto *rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
+      auto* compound = state.get()->as<ob::CompoundStateSpace::StateType>();
+      auto* se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      auto* rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
       se2->setX(config[0]);
       se2->setY(config[1]);
       se2->setYaw(config[2]);
@@ -871,28 +868,25 @@ class OmplVampPlanner {
     }
   }
 
-  auto read_state(const ob::State *state) const -> std::vector<double> {
+  auto read_state(const ob::State* state) const -> std::vector<double> {
     std::vector<double> out(active_dim_);
     if (base_only_) {
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *se2 =
-          wrapper
-              ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
-              : state->as<ob::SE2StateSpace::StateType>();
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* se2 =
+          wrapper ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
+                  : state->as<ob::SE2StateSpace::StateType>();
       out[0] = se2->getX();
       out[1] = se2->getY();
       out[2] = se2->getYaw();
     } else if (has_base_) {
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *compound =
-          wrapper
-              ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
-              : state->as<ob::CompoundStateSpace::StateType>();
-      const auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
-      const auto *rv =
-          compound->as<ob::RealVectorStateSpace::StateType>(1);
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* compound =
+          wrapper ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
+                  : state->as<ob::CompoundStateSpace::StateType>();
+      const auto* se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      const auto* rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
       out[0] = se2->getX();
       out[1] = se2->getY();
       out[2] = se2->getYaw();
@@ -900,7 +894,7 @@ class OmplVampPlanner {
         out[i] = rv->values[i - base_dim_];
       }
     } else {
-      const auto *rv = extract_real_state(state);
+      const auto* rv = extract_real_state(state);
       for (int i = 0; i < active_dim_; ++i) out[i] = rv->values[i];
     }
     return out;
@@ -908,12 +902,12 @@ class OmplVampPlanner {
 
   // ── Multilevel planning (base-included subgroups) ──────────────────
 
-  auto plan_multilevel(const std::vector<double> &start,
-                       const std::vector<double> &goal,
-                       const std::string &planner_name, double time_limit,
+  auto plan_multilevel(const std::vector<double>& start,
+                       const std::vector<double>& goal,
+                       const std::string& planner_name, double time_limit,
                        bool simplify, bool interpolate,
-                       int interpolate_count = 0,
-                       double resolution = 64.0) -> PlanResult {
+                       int interpolate_count = 0, double resolution = 64.0)
+      -> PlanResult {
     // Build a 2-level hierarchy:
     //   Level 0: SE(2) (base pose, non-holonomic — Dubins or Reeds-Shepp)
     //   Level 1: Compound(SE(2) + R^N) (full active space)
@@ -962,7 +956,8 @@ class OmplVampPlanner {
       // can't auto-pick it since the concrete space's type tag is
       // STATE_SPACE_REEDS_SHEPP / STATE_SPACE_DUBINS, but constructing
       // it manually bypasses that check.
-      auto proj = std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_se2);
+      auto proj =
+          std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_se2);
       // Eagerly initialise the fiber space (sampler + scratch state),
       // which the framework relies on for lifting.
       proj->makeFiberSpace();
@@ -970,7 +965,7 @@ class OmplVampPlanner {
     }
 
     // Create multilevel planner and problem definition ─────────────────
-    auto &top_si = si_vec.back();
+    auto& top_si = si_vec.back();
     auto planner = create_multilevel_planner(si_vec, proj_vec, planner_name);
 
     auto pdef = std::make_shared<ob::ProblemDefinition>(top_si);
@@ -1014,7 +1009,7 @@ class OmplVampPlanner {
     result.solved = static_cast<bool>(status);
 
     if (result.solved) {
-      auto &path = *pdef->getSolutionPath()->as<og::PathGeometric>();
+      auto& path = *pdef->getSolutionPath()->as<og::PathGeometric>();
 
       if (simplify) {
         og::PathSimplifier simplifier(top_si);
@@ -1053,8 +1048,8 @@ class OmplVampPlanner {
   // adjacent layers, matching the output granularity of
   // ``plan_multilevel`` / ``plan_geometric``.
 
-  auto plan_decomposed_wrapper(const std::vector<double> &start,
-                               const std::vector<double> &goal,
+  auto plan_decomposed_wrapper(const std::vector<double>& start,
+                               const std::vector<double>& goal,
                                double time_limit, bool /*simplify*/,
                                bool interpolate, int interpolate_count = 0,
                                double resolution = 64.0) -> PlanResult {
@@ -1081,7 +1076,7 @@ class OmplVampPlanner {
 
     auto si_compound = std::make_shared<ob::SpaceInformation>(space_);
     og::PathGeometric path(si_compound);
-    for (const auto &cfg_i : r.path) {
+    for (const auto& cfg_i : r.path) {
       ob::ScopedState<> s(space_);
       write_scoped_state(s, cfg_i);
       path.append(s.get());
@@ -1102,12 +1097,12 @@ class OmplVampPlanner {
 
   // ── Geometric planning (arm-only subgroups, with constraints) ─────
 
-  auto plan_geometric(const std::vector<double> &start,
-                      const std::vector<double> &goal,
-                      const std::string &planner_name, double time_limit,
+  auto plan_geometric(const std::vector<double>& start,
+                      const std::vector<double>& goal,
+                      const std::string& planner_name, double time_limit,
                       bool simplify, bool interpolate,
-                      int interpolate_count = 0,
-                      double resolution = 64.0) -> PlanResult {
+                      int interpolate_count = 0, double resolution = 64.0)
+      -> PlanResult {
     const bool constrained = !constraints_.empty();
     if (constrained) {
       reject_incompatible_planner(planner_name);
@@ -1151,8 +1146,7 @@ class OmplVampPlanner {
     // optimal planners; for planners that don't read it the call is
     // harmless.
     if (!cost_libs_.empty()) {
-      ss.setOptimizationObjective(
-          build_objective(si, /*active_top=*/false));
+      ss.setOptimizationObjective(build_objective(si, /*active_top=*/false));
     }
 
     auto t0 = std::chrono::steady_clock::now();
@@ -1168,7 +1162,7 @@ class OmplVampPlanner {
     if (result.solved) {
       if (simplify) ss.simplifySolution();
 
-      auto &path = ss.getSolutionPath();
+      auto& path = ss.getSolutionPath();
       if (interpolate) {
         if (interpolate_count > 0) {
           path.interpolate(static_cast<unsigned int>(interpolate_count));
@@ -1191,12 +1185,12 @@ class OmplVampPlanner {
 
   // ── Constraint helpers ────────────────────────────────────────────
 
-  void check_constraint_satisfaction(const std::vector<double> &active_q,
-                                     const char *which) const {
+  void check_constraint_satisfaction(const std::vector<double>& active_q,
+                                     const char* which) const {
     Eigen::VectorXd q(active_dim_);
     for (int i = 0; i < active_dim_; ++i) q[i] = active_q[i];
     for (std::size_t i = 0; i < constraints_.size(); ++i) {
-      const auto &c = constraints_[i];
+      const auto& c = constraints_[i];
       Eigen::VectorXd r(c->getCoDimension());
       c->function(q, r);
       const double residual = r.norm();
@@ -1212,12 +1206,12 @@ class OmplVampPlanner {
     }
   }
 
-  static void reject_incompatible_planner(const std::string &name) {
+  static void reject_incompatible_planner(const std::string& name) {
     static const std::vector<std::string> bad = {
         "bitstar",  "abitstar",   "aitstar",  "eitstar",
         "blitstar", "fmt",        "bfmt",     "informed_rrtstar",
         "rrtsharp", "rrtxstatic", "strrtstar"};
-    for (const auto &b : bad) {
+    for (const auto& b : bad) {
       if (name == b) {
         throw std::invalid_argument(
             "Planner '" + name +
@@ -1243,7 +1237,7 @@ class OmplVampPlanner {
   // Without this, a CompiledCost would silently shadow the car-like
   // distance in motionCost and the non-holonomic shaping would only
   // affect nearest-neighbour selection, not rewiring decisions.
-  auto build_objective(const ob::SpaceInformationPtr &si, bool active_top) const
+  auto build_objective(const ob::SpaceInformationPtr& si, bool active_top) const
       -> std::shared_ptr<ob::OptimizationObjective> {
     const CompiledCost::Layout layout =
         active_top ? (base_only_ ? CompiledCost::Layout::kSE2Only
@@ -1253,9 +1247,8 @@ class OmplVampPlanner {
     const bool keep_path_length = active_top && has_base_;
 
     if (cost_libs_.size() == 1 && !keep_path_length) {
-      return std::make_shared<CompiledCost>(si, cost_libs_[0],
-                                            cost_weights_[0], layout,
-                                            active_dim_);
+      return std::make_shared<CompiledCost>(si, cost_libs_[0], cost_weights_[0],
+                                            layout, active_dim_);
     }
 
     auto multi = std::make_shared<ob::MultiOptimizationObjective>(si);
@@ -1282,9 +1275,9 @@ class OmplVampPlanner {
   // ── Planner factories ─────────────────────────────────────────────
 
   static auto create_multilevel_planner(
-      std::vector<ob::SpaceInformationPtr> &si_vec,
-      std::vector<om::ProjectionPtr> &proj_vec,
-      const std::string &name) -> ob::PlannerPtr {
+      std::vector<ob::SpaceInformationPtr>& si_vec,
+      std::vector<om::ProjectionPtr>& proj_vec, const std::string& name)
+      -> ob::PlannerPtr {
     // Use the 3-arg constructor whenever we have custom projections
     // (proj_vec.size() == si_vec.size() - 1); otherwise fall back to the
     // 1-arg auto-detection constructor (used when there is a single
@@ -1321,8 +1314,8 @@ class OmplVampPlanner {
                       : std::make_shared<om::QRRTStar>(si_vec);
   }
 
-  static auto create_geometric_planner(const ob::SpaceInformationPtr &si,
-                                       const std::string &name)
+  static auto create_geometric_planner(const ob::SpaceInformationPtr& si,
+                                       const std::string& name)
       -> ob::PlannerPtr {
     if (name == "rrtc" || name == "rrtconnect")
       return std::make_shared<og::RRTConnect>(si);

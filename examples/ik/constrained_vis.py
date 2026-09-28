@@ -17,13 +17,13 @@ import numpy as np
 import pybullet as pb
 from scipy.spatial.transform import Rotation
 
+from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.fetch import (
     CHAIN_CONFIGS,
     HOME_JOINTS,
     JOINT_GROUPS,
     fetch_robot_config,
 )
-from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.kinematics.pink_ik_solver import PinkIKSolver
 from fetch_planning.types import PinkIKConfig, SE3Pose

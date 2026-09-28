@@ -10,7 +10,8 @@ cmake_policy(SET CMP0167 NEW)
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 find_package(pybind11 CONFIG REQUIRED)
-find_package(Boost REQUIRED COMPONENTS serialization filesystem system)
+# Boost.System is header-only; its stub library was removed in Boost 1.89.
+find_package(Boost REQUIRED COMPONENTS serialization filesystem)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(orocos_kdl QUIET)
 find_package(PkgConfig QUIET)
@@ -69,7 +70,6 @@ target_link_libraries(_ompl_vamp PRIVATE
     pdqsort
     Boost::serialization
     Boost::filesystem
-    Boost::system
     ${CMAKE_DL_LIBS}   # for dlopen/dlsym in CompiledConstraint
 )
 

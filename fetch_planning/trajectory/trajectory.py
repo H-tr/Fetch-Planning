@@ -15,9 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from fetch_planning._time_parameterization import (
-        TotgTrajectory as _TotgTrajectory,
-    )
+    from fetch_planning._time_parameterization import TotgTrajectory as _TotgTrajectory
 
 
 @dataclass(frozen=True)

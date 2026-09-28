@@ -49,8 +49,7 @@ NB_MODULE(_ompl_vamp, m) {
            "When base_dim > 0, uses multilevel planning "
            "(SE2 -> SE2 x R^N) via OMPL fiber bundles.",
            nb::arg("active_indices"), nb::arg("frozen_config"),
-           nb::arg("base_dim") = 0,
-           nb::arg("turning_radius") = 0.2,
+           nb::arg("base_dim") = 0, nb::arg("turning_radius") = 0.2,
            nb::arg("allow_reverse") = false)
       .def("set_base_bounds", &OmplVampPlanner::set_base_bounds,
            nb::arg("x_lo"), nb::arg("x_hi"), nb::arg("y_lo"), nb::arg("y_hi"),

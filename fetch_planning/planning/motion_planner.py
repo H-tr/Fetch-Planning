@@ -38,18 +38,14 @@ class MotionPlannerBase(Protocol):
     """Protocol for motion planner backends."""
 
     @property
-    def robot_name(self) -> str:
-        ...
+    def robot_name(self) -> str: ...
 
     @property
-    def num_dof(self) -> int:
-        ...
+    def num_dof(self) -> int: ...
 
-    def plan(self, start: np.ndarray, goal: np.ndarray) -> PlanningResult:
-        ...
+    def plan(self, start: np.ndarray, goal: np.ndarray) -> PlanningResult: ...
 
-    def validate(self, configuration: np.ndarray) -> bool:
-        ...
+    def validate(self, configuration: np.ndarray) -> bool: ...
 
 
 class MotionPlanner:
@@ -318,9 +314,7 @@ class MotionPlanner:
 
     # ── Pointcloud environment ────────────────────────────────────────
 
-    def _add_pointcloud_impl(
-        self, pointcloud: np.ndarray, point_radius: float
-    ) -> None:
+    def _add_pointcloud_impl(self, pointcloud: np.ndarray, point_radius: float) -> None:
         r_min, r_max = self._planner.min_max_radii()
         self._planner.add_pointcloud(
             np.asarray(pointcloud, dtype=np.float32).tolist(),
@@ -462,9 +456,7 @@ class MotionPlanner:
         active_indices, base_dim = self._resolve_subgroup(
             robot_name, full_names, PLANNING_SUBGROUPS
         )
-        self._planner.set_subgroup(
-            active_indices, self._base_config.tolist(), base_dim
-        )
+        self._planner.set_subgroup(active_indices, self._base_config.tolist(), base_dim)
         self._apply_subgroup_state(full_names, active_indices, base_dim)
 
     # ── Subgroup helpers ──────────────────────────────────────────────

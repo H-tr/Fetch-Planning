@@ -44,12 +44,12 @@ from fire import Fire
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "examples" / "planning"))
 
+from fetch_planning.envs.pybullet_env import PyBulletEnv  # noqa: E402
 from fetch_planning.fetch import (  # noqa: E402
     HOME_JOINTS,
     JOINT_GROUPS,
     fetch_robot_config,
 )
-from fetch_planning.envs.pybullet_env import PyBulletEnv  # noqa: E402
 from fetch_planning.kinematics import create_ik_solver  # noqa: E402
 from fetch_planning.planning import (  # noqa: E402
     Constraint,
@@ -302,9 +302,7 @@ def record_pink_ik(out: Path) -> None:
 
     solved: list[tuple[str, np.ndarray, np.ndarray, np.ndarray]] = []
     for ee_link, chain_cols, seed, offsets in chain_specs:
-        solver = create_ik_solver(
-            "arm_with_torso", backend="pink", config=config
-        )
+        solver = create_ik_solver("arm_with_torso", backend="pink", config=config)
         home_pose = solver.fk(seed)
         for off in offsets:
             r = solver.solve_constrained(

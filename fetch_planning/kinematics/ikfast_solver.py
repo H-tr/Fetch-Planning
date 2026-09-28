@@ -168,9 +168,7 @@ class IKFastSolver(IKSolverBase):
                 if q.shape != (8,):
                     continue
                 # Reject branches that violate limits.
-                if np.any(q < _LOWER_BOUNDS - 1e-6) or np.any(
-                    q > _UPPER_BOUNDS + 1e-6
-                ):
+                if np.any(q < _LOWER_BOUNDS - 1e-6) or np.any(q > _UPPER_BOUNDS + 1e-6):
                     continue
 
                 # Score by L2 distance to the seed (closest continuation).
@@ -187,9 +185,7 @@ class IKFastSolver(IKSolverBase):
                 pos_err = float(np.linalg.norm(p_chk - target_pose.position))
                 rot_err_mat = r_chk @ target_pose.rotation.T
                 ori_err = float(
-                    np.linalg.norm(
-                        Rotation.from_matrix(rot_err_mat).as_rotvec()
-                    )
+                    np.linalg.norm(Rotation.from_matrix(rot_err_mat).as_rotvec())
                 )
                 if (
                     pos_err <= cfg.position_tolerance

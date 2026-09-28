@@ -21,9 +21,8 @@ import numpy as np
 import trimesh
 from fire import Fire
 
-import fetch_planning
-from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
+from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
 
@@ -32,8 +31,13 @@ def load_cloud(stride: int = 2) -> np.ndarray:
     """Load the same RLS scene cloud the big demo uses."""
     pcd_dir = "assets/envs/rls_env/pcd"
     parts = [
-        "rls_2", "open_kitchen", "wall", "workstation",
-        "table", "sofa", "coffee_table",
+        "rls_2",
+        "open_kitchen",
+        "wall",
+        "workstation",
+        "table",
+        "sofa",
+        "coffee_table",
     ]
     chunks = []
     for name in parts:
@@ -45,12 +49,12 @@ def load_cloud(stride: int = 2) -> np.ndarray:
 
 
 def main(
-    dx: float = 1.0,           # base move along +x (metres)
-    dy: float = 0.5,           # base move along +y (metres)
-    dtheta: float = np.pi / 2, # base heading change (radians)
-    time_limit: float = 0.5,   # planner budget (seconds)
-    arm_reach: bool = True,    # also change the arm pose
-    load_scene: bool = True,   # include the RLS point cloud
+    dx: float = 1.0,  # base move along +x (metres)
+    dy: float = 0.5,  # base move along +y (metres)
+    dtheta: float = np.pi / 2,  # base heading change (radians)
+    time_limit: float = 0.5,  # planner budget (seconds)
+    arm_reach: bool = True,  # also change the arm pose
+    load_scene: bool = True,  # include the RLS point cloud
     pcd_stride: int = 2,
 ) -> None:
     env = PyBulletEnv(fetch_robot_config, visualize=True)
@@ -64,7 +68,9 @@ def main(
         pointcloud_arg = None
 
     env.sim.client.resetDebugVisualizerCamera(
-        cameraDistance=3.0, cameraYaw=-90.0, cameraPitch=-30.0,
+        cameraDistance=3.0,
+        cameraYaw=-90.0,
+        cameraPitch=-30.0,
         cameraTargetPosition=[0.5, 0.0, 0.8],
     )
 

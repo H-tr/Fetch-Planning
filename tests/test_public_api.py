@@ -1,11 +1,10 @@
 import numpy as np
 import pytest
+from conftest import requires_ikfast, requires_pinocchio
 
 from fetch_planning.fetch import HOME_JOINTS, JOINT_GROUPS, PLANNING_SUBGROUPS
 from fetch_planning.kinematics import create_ik_solver
 from fetch_planning.planning import available_robots
-
-from conftest import requires_ikfast, requires_pinocchio
 
 IK_CHAINS = ["arm", "arm_with_torso", "whole_body"]
 

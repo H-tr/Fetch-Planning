@@ -43,11 +43,11 @@ import pybullet as pb
 import trimesh
 from fire import Fire
 
+from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.fetch import (
     HOME_JOINTS,
     fetch_robot_config,
 )
-from fetch_planning.envs.pybullet_env import PyBulletEnv
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
 
@@ -118,29 +118,110 @@ GRASP_Z_ABOVE_OBJECT = 0.18
 
 IK_CONFIGS = {
     # Pick apple from BASE_NEAR_TABLE
-    "apple_pick_pregrasp": np.array([0.33615000, 0.10858706, 1.25599328, 1.74292549,
-                                     2.07467720, 1.87304888, 1.67130277, 1.03781124]),
-    "apple_pick_grasp": np.array([0.33615000, 0.04100594, 1.08251403, 1.91367749,
-                                  1.89576517, 2.12817309, 1.47575321, 1.12255163]),
+    "apple_pick_pregrasp": np.array(
+        [
+            0.33615000,
+            0.10858706,
+            1.25599328,
+            1.74292549,
+            2.07467720,
+            1.87304888,
+            1.67130277,
+            1.03781124,
+        ]
+    ),
+    "apple_pick_grasp": np.array(
+        [
+            0.33615000,
+            0.04100594,
+            1.08251403,
+            1.91367749,
+            1.89576517,
+            2.12817309,
+            1.47575321,
+            1.12255163,
+        ]
+    ),
     # Place apple at APPLE_PLACE_ON_TABLE from BASE_NEAR_TABLE
-    "apple_place_pregrasp": np.array([0.33601864, 1.31349661, 0.91653407, -1.33525305,
-                                      2.17470403, -2.55480861, 0.86674341, -1.11765199]),
-    "apple_place_grasp": np.array([0.33339889, 1.03490307, 0.80179763, -1.60773281,
-                                   1.90479239, -2.64735886, 0.78393416, -1.19394058]),
+    "apple_place_pregrasp": np.array(
+        [
+            0.33601864,
+            1.31349661,
+            0.91653407,
+            -1.33525305,
+            2.17470403,
+            -2.55480861,
+            0.86674341,
+            -1.11765199,
+        ]
+    ),
+    "apple_place_grasp": np.array(
+        [
+            0.33339889,
+            1.03490307,
+            0.80179763,
+            -1.60773281,
+            1.90479239,
+            -2.64735886,
+            0.78393416,
+            -1.19394058,
+        ]
+    ),
     # Pick bottle from BASE_NEAR_SOFA (at [1.30, 0.30, 0.0])
-    "bottle_pick_pregrasp": np.array([0.33615000, 1.48634844, 1.17377957, -0.82012907,
-                                      2.18802150, -2.08655587, 1.00978762, -1.18493857]),
-    "bottle_pick_grasp": np.array([0.33615000, 1.08199335, 1.06339601, -1.28183340,
-                                   2.03313255, -2.25821000, 0.98723671, -1.24648940]),
+    "bottle_pick_pregrasp": np.array(
+        [
+            0.33615000,
+            1.48634844,
+            1.17377957,
+            -0.82012907,
+            2.18802150,
+            -2.08655587,
+            1.00978762,
+            -1.18493857,
+        ]
+    ),
+    "bottle_pick_grasp": np.array(
+        [
+            0.33615000,
+            1.08199335,
+            1.06339601,
+            -1.28183340,
+            2.03313255,
+            -2.25821000,
+            0.98723671,
+            -1.24648940,
+        ]
+    ),
     # Place bottle at BOTTLE_PLACE_ON_TABLE from BASE_NEAR_TABLE
-    "bottle_place_pregrasp": np.array([0.33615000, 1.55560000, 0.87251107, -2.04827217,
-                                       1.58080162, 1.61242259, 0.46624824, 0.83088567]),
-    "bottle_place_grasp": np.array([0.31359222, 1.27034807, 0.71655213, -2.15610561,
-                                    1.33791379, 1.59433639, 0.37448136, 0.80409473]),
+    "bottle_place_pregrasp": np.array(
+        [
+            0.33615000,
+            1.55560000,
+            0.87251107,
+            -2.04827217,
+            1.58080162,
+            1.61242259,
+            0.46624824,
+            0.83088567,
+        ]
+    ),
+    "bottle_place_grasp": np.array(
+        [
+            0.31359222,
+            1.27034807,
+            0.71655213,
+            -2.15610561,
+            1.33791379,
+            1.59433639,
+            0.37448136,
+            0.80409473,
+        ]
+    ),
 }
 
 
 # ── Scene setup ────────────────────────────────────────────────────
+
 
 def load_room_meshes(env: PyBulletEnv) -> None:
     for mesh_name, _ in SCENE_PROPS:
@@ -166,6 +247,7 @@ def place_graspable(env: PyBulletEnv, mesh_name: str, xyz: np.ndarray) -> int:
 
 
 # ── Planning wrappers ──────────────────────────────────────────────
+
 
 def _extract_torso_arm(full: np.ndarray) -> np.ndarray:
     return full[TORSO_ARM_IDX].copy()
@@ -225,15 +307,17 @@ def _report(label: str, result) -> None:
 
 # ── Path segment bookkeeping ───────────────────────────────────────
 
+
 @dataclass
 class Segment:
-    path: np.ndarray           # (N, 11)
+    path: np.ndarray  # (N, 11)
     attach_body_id: int | None
-    attach_local_tf: np.ndarray | None   # (4, 4): mesh pose in gripper frame
+    attach_local_tf: np.ndarray | None  # (4, 4): mesh pose in gripper frame
     banner: str
 
 
 # ── High-level actions ─────────────────────────────────────────────
+
 
 def _make_full(base: np.ndarray, arm: np.ndarray) -> np.ndarray:
     full = HOME_JOINTS.copy()
@@ -242,7 +326,9 @@ def _make_full(base: np.ndarray, arm: np.ndarray) -> np.ndarray:
     return full
 
 
-def _linear_arm_path(start_full: np.ndarray, end_full: np.ndarray, steps: int = 30) -> np.ndarray:
+def _linear_arm_path(
+    start_full: np.ndarray, end_full: np.ndarray, steps: int = 30
+) -> np.ndarray:
     """Linear interpolation (arm only, base fixed)."""
     t = np.linspace(0, 1, steps)
     path = np.empty((steps, 11))
@@ -305,6 +391,7 @@ def navigate(
 
 
 # ── Playback ───────────────────────────────────────────────────────
+
 
 def find_link_index(env: PyBulletEnv, link_name: str) -> int:
     client = env.sim.client
@@ -437,6 +524,7 @@ def play_segments(
 
 # ── Main ───────────────────────────────────────────────────────────
 
+
 def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     env = PyBulletEnv(fetch_robot_config, visualize=visualize)
     print("── scene setup ──")
@@ -469,13 +557,20 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     # ── Stage 1: pick apple off the table ────────────────────────────
     print("\n── stage 1: pick apple off the table ──")
     pick_free, pick_lift, end_full = pick(
-        current_full, ik_cfg["apple_pick_pregrasp"], ik_cfg["apple_pick_grasp"],
-        cloud, "pick apple",
+        current_full,
+        ik_cfg["apple_pick_pregrasp"],
+        ik_cfg["apple_pick_grasp"],
+        cloud,
+        "pick apple",
     )
     for p in pick_free:
         segments.append(
-            Segment(path=p, attach_body_id=None, attach_local_tf=None,
-                    banner="stage 1: approach apple")
+            Segment(
+                path=p,
+                attach_body_id=None,
+                attach_local_tf=None,
+                banner="stage 1: approach apple",
+            )
         )
     grasp_frame = pick_free[-1][-1]
     env.set_configuration(grasp_frame)
@@ -486,52 +581,74 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
 
     for p in pick_lift:
         segments.append(
-            Segment(path=p, attach_body_id=apple_id,
-                    attach_local_tf=apple_local_tf,
-                    banner="stage 1: lift apple")
+            Segment(
+                path=p,
+                attach_body_id=apple_id,
+                attach_local_tf=apple_local_tf,
+                banner="stage 1: lift apple",
+            )
         )
     current_full = end_full
 
     # ── Stage 2: place apple on the table ────────────────────────────
     print("\n── stage 2: place apple on the table ──")
     place_carry, place_retreat, end_full = place(
-        current_full, ik_cfg["apple_place_pregrasp"], ik_cfg["apple_place_grasp"],
-        cloud, "place apple",
+        current_full,
+        ik_cfg["apple_place_pregrasp"],
+        ik_cfg["apple_place_grasp"],
+        cloud,
+        "place apple",
     )
     for p in place_carry:
         segments.append(
-            Segment(path=p, attach_body_id=apple_id,
-                    attach_local_tf=apple_local_tf,
-                    banner="stage 2: carry apple -> placement")
+            Segment(
+                path=p,
+                attach_body_id=apple_id,
+                attach_local_tf=apple_local_tf,
+                banner="stage 2: carry apple -> placement",
+            )
         )
     for p in place_retreat:
         segments.append(
-            Segment(path=p, attach_body_id=None, attach_local_tf=None,
-                    banner="stage 2: retreat from apple")
+            Segment(
+                path=p,
+                attach_body_id=None,
+                attach_local_tf=None,
+                banner="stage 2: retreat from apple",
+            )
         )
     current_full = end_full
 
     # ── Stage 3: navigate to the sofa ────────────────────────────────
     print("\n── stage 3: base navigation -> sofa ──")
-    nav_path = navigate(
-        current_full, BASE_NEAR_SOFA, cloud, "nav table -> sofa"
-    )
+    nav_path = navigate(current_full, BASE_NEAR_SOFA, cloud, "nav table -> sofa")
     segments.append(
-        Segment(path=nav_path, attach_body_id=None, attach_local_tf=None,
-                banner="stage 3: nav table -> sofa")
+        Segment(
+            path=nav_path,
+            attach_body_id=None,
+            attach_local_tf=None,
+            banner="stage 3: nav table -> sofa",
+        )
     )
     current_full = nav_path[-1]
 
     # ── Stage 4: pick bottle off the sofa ────────────────────────────
     print("\n── stage 4: pick bottle off the sofa ──")
     pick_free, pick_lift, end_full = pick(
-        current_full, ik_cfg["bottle_pick_pregrasp"], ik_cfg["bottle_pick_grasp"],
-        cloud, "pick bottle",
+        current_full,
+        ik_cfg["bottle_pick_pregrasp"],
+        ik_cfg["bottle_pick_grasp"],
+        cloud,
+        "pick bottle",
     )
     for p in pick_free:
         segments.append(
-            Segment(path=p, attach_body_id=None, attach_local_tf=None,
-                    banner="stage 4: approach bottle")
+            Segment(
+                path=p,
+                attach_body_id=None,
+                attach_local_tf=None,
+                banner="stage 4: approach bottle",
+            )
         )
     grasp_frame = pick_free[-1][-1]
     env.set_configuration(grasp_frame)
@@ -541,40 +658,54 @@ def main(pcd_stride: int = 1, visualize: bool = True) -> None:
     bottle_local_tf = capture_local_transform(env, gripper_link, bottle_id)
     for p in pick_lift:
         segments.append(
-            Segment(path=p, attach_body_id=bottle_id,
-                    attach_local_tf=bottle_local_tf,
-                    banner="stage 4: lift bottle")
+            Segment(
+                path=p,
+                attach_body_id=bottle_id,
+                attach_local_tf=bottle_local_tf,
+                banner="stage 4: lift bottle",
+            )
         )
     current_full = end_full
 
     # ── Stage 5: navigate back to the table ──────────────────────────
     print("\n── stage 5: base navigation -> table ──")
-    nav_back = navigate(
-        current_full, BASE_NEAR_TABLE, cloud, "nav sofa -> table"
-    )
+    nav_back = navigate(current_full, BASE_NEAR_TABLE, cloud, "nav sofa -> table")
     segments.append(
-        Segment(path=nav_back, attach_body_id=bottle_id,
-                attach_local_tf=bottle_local_tf,
-                banner="stage 5: nav sofa -> table")
+        Segment(
+            path=nav_back,
+            attach_body_id=bottle_id,
+            attach_local_tf=bottle_local_tf,
+            banner="stage 5: nav sofa -> table",
+        )
     )
     current_full = nav_back[-1]
 
     # ── Stage 6: place bottle beside the apple ──────────────────────
     print("\n── stage 6: place bottle beside the apple ──")
     place_carry, place_retreat, end_full = place(
-        current_full, ik_cfg["bottle_place_pregrasp"], ik_cfg["bottle_place_grasp"],
-        cloud, "place bottle",
+        current_full,
+        ik_cfg["bottle_place_pregrasp"],
+        ik_cfg["bottle_place_grasp"],
+        cloud,
+        "place bottle",
     )
     for p in place_carry:
         segments.append(
-            Segment(path=p, attach_body_id=bottle_id,
-                    attach_local_tf=bottle_local_tf,
-                    banner="stage 6: carry bottle -> placement")
+            Segment(
+                path=p,
+                attach_body_id=bottle_id,
+                attach_local_tf=bottle_local_tf,
+                banner="stage 6: carry bottle -> placement",
+            )
         )
     for p in place_retreat:
         segments.append(
-            Segment(path=p, attach_body_id=None, attach_local_tf=None,
-                    banner="stage 6: retreat from bottle")
+            Segment(
+                path=p,
+                attach_body_id=None,
+                attach_local_tf=None,
+                banner="stage 6: retreat from bottle",
+            )
         )
 
     env.set_configuration(segments[0].path[0])

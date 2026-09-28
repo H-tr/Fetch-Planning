@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.envs.pybullet_env import PyBulletEnv
+from fetch_planning.fetch import HOME_JOINTS, fetch_robot_config
 from fetch_planning.planning import SymbolicContext
 
 SUBGROUP = "fetch_arm"
