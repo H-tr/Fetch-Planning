@@ -3,6 +3,10 @@ project(fetch_planning_ext LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(CheckCXXCompilerFlag)
+# BoostConfig.cmake lookup: conda Boost in pixi, boost-devel 1.75 on
+# manylinux_2_34, and the from-source Boost 1.82 (via Boost_ROOT) that the
+# release workflow builds for manylinux_2_28.
 cmake_policy(SET CMP0167 NEW)
 
 # ── Dependencies ──────────────────────────────────────────────────────
@@ -23,6 +27,31 @@ find_package(NLopt QUIET)
 # IKFast's analytic linear algebra requires LAPACK routines (dgetrf_/dgesv_/…).
 find_package(LAPACK QUIET)
 
+# ── Architecture flags ───────────────────────────────────────────────
+# x86-64-v3 is the Haswell (2013+) micro-arch level: guarantees AVX2,
+# BMI1/BMI2, FMA — everything VAMP/SIMDxorshift rely on. Using a fixed
+# level instead of -march=native so CI-built wheels run on any modern
+# x86_64 CPU, not only the builder. Override for local perf builds:
+#   cmake -DFETCH_ARCH_FLAGS=-march=native ...
+set(FETCH_ARCH_FLAGS "-march=x86-64-v3"
+    CACHE STRING "Target CPU arch flags for native extensions")
+
+# Older compilers may not recognize newer micro-architecture levels such as
+# x86-64-v3. If that happens, keep the required SIMD feature set by falling
+# back to explicit AVX2/FMA/BMI2 flags.
+set(_fetch_arch_flags "${FETCH_ARCH_FLAGS}")
+check_cxx_compiler_flag("${_fetch_arch_flags}" FETCH_ARCH_FLAGS_SUPPORTED)
+if(NOT FETCH_ARCH_FLAGS_SUPPORTED)
+    message(WARNING "Compiler does not support FETCH_ARCH_FLAGS='${FETCH_ARCH_FLAGS}'. Falling back to '-march=x86-64 -mavx2 -mfma -mbmi2'.")
+    set(_fetch_arch_flags "-march=x86-64 -mavx2 -mfma -mbmi2")
+    check_cxx_compiler_flag("${_fetch_arch_flags}" FETCH_ARCH_FALLBACK_SUPPORTED)
+    if(NOT FETCH_ARCH_FALLBACK_SUPPORTED)
+        message(FATAL_ERROR "Compiler does not support fallback architecture flags '${_fetch_arch_flags}'. Set -DFETCH_ARCH_FLAGS to a supported value.")
+    endif()
+endif()
+
+separate_arguments(FETCH_ARCH_FLAGS_LIST NATIVE_COMMAND "${_fetch_arch_flags}")
+
 # ── VAMP dependencies (header-only, fetched via CPM) ─────────────────
 
 include(third_party/vamp/cmake/FetchInitCPM.cmake)
@@ -30,7 +59,7 @@ include(third_party/vamp/cmake/Dependencies.cmake)
 
 # SIMDxorshift needs AVX2 (conda compiler defaults to -march=nocona)
 if(TARGET simdxorshift)
-    target_compile_options(simdxorshift PRIVATE -march=native)
+    target_compile_options(simdxorshift PRIVATE ${FETCH_ARCH_FLAGS_LIST})
 endif()
 
 # VAMP headers (upstream, header-only) plus our own robot model headers
@@ -74,7 +103,7 @@ target_link_libraries(_ompl_vamp PRIVATE
 )
 
 target_compile_options(_ompl_vamp PRIVATE
-    -march=native
+    ${FETCH_ARCH_FLAGS_LIST}
 )
 
 install(TARGETS _ompl_vamp LIBRARY DESTINATION fetch_planning)
@@ -97,7 +126,7 @@ target_link_libraries(_time_parameterization PRIVATE
 )
 
 target_compile_options(_time_parameterization PRIVATE
-    -march=native
+    ${FETCH_ARCH_FLAGS_LIST}
 )
 
 install(TARGETS _time_parameterization LIBRARY DESTINATION fetch_planning)

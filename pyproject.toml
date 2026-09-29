@@ -1,10 +1,10 @@
 [build-system]
-requires = ["scikit-build-core>=0.4.3", "nanobind>=2.0.0", "pybind11>=2.10"]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0.0", "pybind11>=2.10"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "fetch_planning"
-version = "0.2.0"
+version = "0.3.0"
 description = "Whole-body Fetch motion planning (OMPL + VAMP)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,14 +14,92 @@ dependencies = [
     "pin-pink",
 ]
 
+[project.urls]
+Homepage = "https://github.com/H-tr/Fetch-Planning"
+Repository = "https://github.com/H-tr/Fetch-Planning"
+Issues = "https://github.com/H-tr/Fetch-Planning/issues"
+
 [tool.scikit-build]
-minimum-version = "0.4"
+minimum-version = "0.10"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["fetch_planning"]
 cmake.build-type = "Release"
 
+# Keep sdist lean enough for PyPI's 100 MB limit.
+# Only ship what's needed to rebuild the wheel from source:
+#   - Python sources + package resources (URDFs, meshes shipped with
+#     fetch_planning)
+#   - CMake sources under ext/
+#   - third_party/ompl sources (compiled from source) minus docs/demos/tests
+#   - third_party/vamp cmake + header-only src (resources/ and build/ are not
+#     needed to compile)
+# Everything else — examples, docs, mkdocs output, repo-level assets, the
+# cricket / foam submodules (used only by scripts, never by the wheel
+# build) — is excluded.
+sdist.exclude = [
+    # Repo-level non-build content
+    "assets/",
+    "docs/",
+    "site/",
+    "examples/",
+    "tests/",
+    "scripts/",
+    "tools/",
+    "build/",
+    "dist/",
+    "render_tmp/",
+    ".pixi/",
+    ".pytest_cache/",
+    ".claude/",
+    ".vscode/",
+    ".coverage",
+    "pixi.lock",
+    "pixi.toml",
+
+    # Unused third-party trees (only consumed by build_robot scripts)
+    "third_party/cricket/",
+    "third_party/foam/",
+
+    # OMPL: ship only what the build links against
+    "third_party/ompl/doc/",
+    "third_party/ompl/tests/",
+    "third_party/ompl/demos/",
+    "third_party/ompl/py-bindings/",
+    "third_party/ompl/scripts/",
+
+    # VAMP: header-only, CMake needs cmake/ + src/impl/ only
+    "third_party/vamp/resources/",
+    "third_party/vamp/build/",
+    "third_party/vamp/docker/",
+    "third_party/vamp/scripts/",
+]
+
 [project.optional-dependencies]
-dev = ["pre-commit", "pybullet"]
+dev = ["pre-commit", "pybullet", "pytest>=8.0"]
+
+# ── cibuildwheel ─────────────────────────────────────────────────────
+# Default Linux wheel target: manylinux_2_34 (AlmaLinux 9) x86_64. AVX2
+# is required (VAMP/SIMDxorshift), which the default -march=x86-64-v3 in
+# CMakeLists.txt targets.
+#
+# The release workflow also builds manylinux_2_28 wheels for older glibc
+# systems. That path has to provide a newer Boost explicitly: OMPL
+# requires Boost >= 1.68, while EL8 ships Boost 1.66.
+#
+# lapack-devel lets CMake build the ikfast_fetch extension; auditwheel
+# bundles liblapack into the wheel. TRAC-IK (pytracik) is skipped — the
+# build images have no orocos-kdl — so wheel users get the ikfast and
+# pink IK backends only.
+[tool.cibuildwheel]
+# pin-pink requires Python >= 3.10; extend this if a new cpython ships.
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_* *-win32 *-manylinux_i686 pp*"
+build-verbosity = 1
+archs = ["x86_64"]
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_34"
+before-all = "dnf install -y boost-devel eigen3-devel lapack-devel"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

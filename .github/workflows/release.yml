@@ -1,0 +1,93 @@
+name: Release
+
+# Triggers on any v* tag push (e.g. v0.3.0). Builds manylinux_2_34 and
+# manylinux_2_28 x86_64 wheels for cp310..cp314 via cibuildwheel, then
+# publishes to PyPI via Trusted Publishing (OIDC — no API tokens committed).
+#
+# No sdist is uploaded: the project vendors large native dependencies
+# (OMPL, VAMP, Boost, Eigen) and is not intended to be built on a user
+# machine at `pip install` time. End users get a prebuilt wheel or a
+# "no matching distribution" error.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build_wheels:
+    name: Build ${{ matrix.python }} wheel (${{ matrix.manylinux.platform }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        python: [cp310, cp311, cp312, cp313, cp314]
+        manylinux:
+          - image: manylinux_2_34
+            platform: manylinux_2_34_x86_64
+            before_all: dnf install -y boost-devel eigen3-devel lapack-devel
+            environment: ""
+          - image: manylinux_2_28
+            platform: manylinux_2_28_x86_64
+            before_all: >-
+              dnf install -y curl eigen3-devel lapack-devel &&
+              curl -fsSL https://archives.boost.io/release/1.82.0/source/boost_1_82_0.tar.gz -o /tmp/boost_1_82_0.tar.gz &&
+              tar -xzf /tmp/boost_1_82_0.tar.gz -C /tmp &&
+              cd /tmp/boost_1_82_0 &&
+              ./bootstrap.sh --prefix=/opt/boost-1.82.0 --with-libraries=serialization,filesystem,system,program_options &&
+              ./b2 -d0 -j$(nproc) link=static runtime-link=shared threading=multi variant=release cxxstd=17 cxxflags=-fPIC install
+            environment: >-
+              BOOST_ROOT=/opt/boost-1.82.0
+              Boost_ROOT=/opt/boost-1.82.0
+              CMAKE_ARGS='-DBoost_NO_SYSTEM_PATHS=ON -DBoost_USE_STATIC_LIBS=ON -DBOOST_ROOT=/opt/boost-1.82.0 -DBoost_ROOT=/opt/boost-1.82.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build wheel via cibuildwheel
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: ${{ matrix.python }}-manylinux_x86_64
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.manylinux.image }}
+          CIBW_BEFORE_ALL_LINUX: ${{ matrix.manylinux.before_all }}
+          CIBW_ENVIRONMENT_LINUX: ${{ matrix.manylinux.environment }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.python }}-${{ matrix.manylinux.platform }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish to PyPI
+    needs: [build_wheels]
+    runs-on: ubuntu-latest
+    # Only publish on real tag pushes. workflow_dispatch runs still build
+    # (so you can smoke-test the pipeline without shipping).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/fetch-planning
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
