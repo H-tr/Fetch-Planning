@@ -12,12 +12,9 @@ def _have(module: str) -> bool:
 
 
 def _ikfast_solver_available() -> bool:
-    """IKFastSolver imports ``ikfast_fetch`` as a top-level module.
-
-    In wheel installs that module is top-level; in editable installs it
-    lives under ``fetch_planning.ikfast_fetch`` and the solver's
-    ``import_module('ikfast_fetch')`` call fails.  Test by actually
-    trying to construct the solver.
+    """The ``fetch_planning.ikfast_fetch`` extension is only built when
+    CMake finds LAPACK, so it may be missing from a given install.  Test
+    by actually trying to construct the solver.
     """
     try:
         from fetch_planning.kinematics import create_ik_solver
@@ -30,10 +27,15 @@ def _ikfast_solver_available() -> bool:
 
 HAS_IKFAST = _ikfast_solver_available()
 HAS_PINOCCHIO = _have("pinocchio")
+HAS_TRAC_IK = _have("pytracik")
 
 requires_ikfast = pytest.mark.skipif(
     not HAS_IKFAST, reason="ikfast_fetch backend unavailable in this install"
 )
 requires_pinocchio = pytest.mark.skipif(
     not HAS_PINOCCHIO, reason="pinocchio not installed"
+)
+requires_trac_ik = pytest.mark.skipif(
+    not HAS_TRAC_IK,
+    reason="pytracik not built (needs orocos-kdl + NLopt; absent from PyPI wheels)",
 )

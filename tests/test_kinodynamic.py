@@ -290,6 +290,7 @@ HAS_DEMO_SCENE = (REPO / "assets" / "envs" / "rls_env" / "pcd").is_dir()
 def test_demo_scene_legs(monkeypatch):
     """Every whole-body and arm leg of the demo, planned kinodynamically
     in the 151k-point scene, is executable."""
+    pytest.importorskip("pybullet")  # the demo scripts import it at module level
     monkeypatch.chdir(REPO)
     monkeypatch.syspath_prepend(str(REPO / "examples" / "planning"))
     import kinodynamic as example

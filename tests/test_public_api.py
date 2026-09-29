@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from conftest import requires_ikfast, requires_pinocchio
+from conftest import requires_ikfast, requires_pinocchio, requires_trac_ik
 
 from fetch_planning.fetch import HOME_JOINTS, JOINT_GROUPS, PLANNING_SUBGROUPS
 from fetch_planning.kinematics import create_ik_solver
@@ -32,6 +32,7 @@ def test_planning_subgroups_exposed():
     assert expected.issubset(set(available_robots()))
 
 
+@requires_trac_ik
 @pytest.mark.parametrize("chain", IK_CHAINS)
 def test_trac_ik_constructs(chain):
     solver = create_ik_solver(chain, backend="trac_ik")
