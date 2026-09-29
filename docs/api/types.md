@@ -30,6 +30,10 @@
 
 ::: fetch_planning.types.planning.PlanningResult
 
+::: fetch_planning.types.planning.KinodynamicConfig
+
+::: fetch_planning.types.planning.KinodynamicResult
+
 ## Robot
 
 ::: fetch_planning.types.robot.RobotConfig

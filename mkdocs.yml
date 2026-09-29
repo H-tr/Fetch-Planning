@@ -90,6 +90,7 @@ nav:
       - Manifold planning: planning/manifold.md
       - Cost-space planning: planning/cost.md
       - Time parameterization: planning/trajectory.md
+      - Kinodynamic planning: planning/kinodynamic.md
   - API Reference:
       - Kinematics: api/kinematics.md
       - Motion Planning: api/planning.md

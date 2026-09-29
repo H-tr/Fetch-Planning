@@ -8,6 +8,8 @@ type checkers can resolve ``import fetch_planning._ompl_vamp``.
 
 from collections.abc import Sequence
 
+import numpy as np
+
 class PlanResult:
     """Result of a single ``OmplVampPlanner.plan`` call."""
 
@@ -38,6 +40,110 @@ class PlanResult:
         ``inf`` when ``solved`` is false.
         """
         ...
+
+class KinodynamicSettings:
+    """Parameters of ``OmplVampPlanner.plan_kinodynamic`` (FLASK).
+
+    See ``ext/ompl_vamp/plan_kinodynamic.hpp`` for field semantics;
+    :class:`fetch_planning.types.KinodynamicConfig` fills them from the
+    robot limits in :mod:`fetch_planning.fetch`.
+    """
+
+    max_velocity: list[float]
+    max_acceleration: list[float]
+    base_max_speed: float
+    base_max_acceleration: float
+    base_max_yaw_rate: float
+    base_max_yaw_acceleration: float
+    allow_reverse: bool
+    rho: float
+    limit_aware_duration: bool
+    max_extension_time: float
+    velocity_sample_scale: float
+    velocity_metric_weight: float
+    rest_sample_probability: float
+    spin_probability: float
+    heading_tolerance: float
+    simplify: bool
+    simplify_iterations: int
+    simplify_time_limit: float
+    max_iterations: int
+    seed: int
+
+    def __init__(self) -> None: ...
+
+class FlatTrajectory:
+    """Piecewise-cubic trajectory in the flat output space (C++ handle)."""
+
+    @property
+    def duration(self) -> float: ...
+    @property
+    def active_dim(self) -> int: ...
+    @property
+    def base_dim(self) -> int: ...
+    @property
+    def num_segments(self) -> int: ...
+    def position(self, t: float) -> np.ndarray: ...
+    def velocity(self, t: float) -> np.ndarray: ...
+    def acceleration(self, t: float) -> np.ndarray: ...
+    def sample(
+        self, times: Sequence[float]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+    def sample_uniform(
+        self, dt: float
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ...
+    def base_twist(self, t: float) -> tuple[float, float]:
+        """Body-frame base command ``(v, omega)`` at ``t``."""
+        ...
+
+    def knot_times(self) -> list[float]: ...
+    def segment_kinds(self) -> list[int]:
+        """Per segment: ``0`` drive, ``1`` rotate in place."""
+        ...
+
+    def segment_gears(self) -> list[int]:
+        """Per segment: ``0`` forward, ``1`` reverse."""
+        ...
+
+class KinodynamicResult:
+    """Result of ``OmplVampPlanner.plan_kinodynamic``."""
+
+    @property
+    def solved(self) -> bool: ...
+    @property
+    def trajectory(self) -> FlatTrajectory: ...
+    @property
+    def planning_time_ns(self) -> int:
+        """Total planning time including simplification, in nanoseconds."""
+        ...
+
+    @property
+    def simplify_time_ns(self) -> int: ...
+    @property
+    def cost(self) -> float:
+        """LQMT cost ``sum_i w_i int y_i''^2 dt + rho T`` of the trajectory."""
+        ...
+
+    @property
+    def iterations(self) -> int: ...
+    @property
+    def start_tree_size(self) -> int: ...
+    @property
+    def goal_tree_size(self) -> int: ...
+    @property
+    def edges_checked(self) -> int: ...
+
+def flat_optimal_time(
+    y0: Sequence[float],
+    v0: Sequence[float],
+    y1: Sequence[float],
+    v1: Sequence[float],
+    weights: Sequence[float],
+    rho: float,
+) -> tuple[float, float]:
+    """Minimum-cost duration ``T*`` and cost ``J(T*)`` of the LQMT (cubic)
+    motion between two flat states, ``J(T) = sum_i w_i int y_i''^2 dt + rho T``."""
+    ...
 
 class OmplVampPlanner:
     """OMPL planner with VAMP SIMD-accelerated collision checking.
@@ -233,6 +339,26 @@ class OmplVampPlanner:
                 Default ``64.0``.  Set to ``0.0`` to fall back to OMPL's
                 default interpolator.  Cannot be combined with
                 ``interpolate_count``.
+        """
+        ...
+
+    def plan_kinodynamic(
+        self,
+        start: Sequence[float],
+        start_velocity: Sequence[float],
+        goal: Sequence[float],
+        time_limit: float,
+        settings: KinodynamicSettings,
+    ) -> KinodynamicResult:
+        """FLASK kinodynamic planning in the flat output space.
+
+        Args:
+            start: Active-DOF start configuration.
+            start_velocity: Active-DOF start velocity, or empty for rest.
+                Base entries are world-frame ``(x_dot, y_dot, theta_dot)``.
+            goal: Active-DOF goal configuration, reached at rest.
+            time_limit: Solver time limit in seconds.
+            settings: Limits and planner parameters.
         """
         ...
 

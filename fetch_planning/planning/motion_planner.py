@@ -22,6 +22,11 @@ metric enters the path-cost objective.
 Arm-only subgroups use standard OMPL geometric planning and
 optionally support CasADi-compiled manifold constraints
 (``ProjectedStateSpace``).
+
+:meth:`MotionPlanner.plan_kinodynamic` is the kinodynamic alternative:
+FLASK (flatness-based kinodynamic RRT-Connect) returns a
+time-parameterised trajectory that respects joint and base velocity /
+acceleration limits, for every subgroup.
 """
 
 from __future__ import annotations
@@ -30,7 +35,13 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from fetch_planning.types import PlannerConfig, PlanningResult, PlanningStatus
+from fetch_planning.types import (
+    KinodynamicConfig,
+    KinodynamicResult,
+    PlannerConfig,
+    PlanningResult,
+    PlanningStatus,
+)
 
 
 @runtime_checkable
@@ -584,6 +595,120 @@ class MotionPlanner:
             iterations=0,
             path_cost=result.path_cost,
         )
+
+    def plan_kinodynamic(
+        self,
+        start: np.ndarray,
+        goal: np.ndarray,
+        start_velocity: np.ndarray | None = None,
+        config: KinodynamicConfig | None = None,
+    ) -> KinodynamicResult:
+        """Plan a dynamically feasible, time-parameterised trajectory (FLASK).
+
+        Kinodynamic RRT-Connect in the differentially flat output space
+        (Duong et al., T-RO 2026): every tree edge is the closed-form
+        minimum-effort cubic between two (position, velocity) states,
+        validated with SIMD-batched collision checks and the joint /
+        base velocity and acceleration limits from
+        :mod:`fetch_planning.fetch`.  For subgroups with the mobile base
+        the base follows unicycle kinematics — heading tangent to the
+        path, forward or reverse, rotate-in-place allowed while parked —
+        so the output can be tracked directly with feed-forward + PID;
+        see :meth:`~fetch_planning.trajectory.KinodynamicTrajectory.base_twist`.
+
+        Collision constraints and soft costs registered on this planner
+        are not used by the kinodynamic planner.
+
+        Args:
+            start: Start configuration (active DOF).
+            goal: Goal configuration (active DOF).  Reached at rest.
+            start_velocity: Optional active-DOF velocity at ``start`` —
+                e.g. ``traj.velocity(t)`` of the trajectory being
+                executed, for replanning on the fly.  Base entries are
+                world-frame ``(x_dot, y_dot, theta_dot)``; the planar
+                part is projected onto the heading.  Defaults to rest.
+            config: Kinodynamic planner parameters.
+
+        Returns:
+            A :class:`~fetch_planning.types.KinodynamicResult` whose
+            ``trajectory`` is a
+            :class:`~fetch_planning.trajectory.KinodynamicTrajectory`.
+        """
+        from fetch_planning.trajectory import KinodynamicTrajectory
+
+        if config is None:
+            config = KinodynamicConfig()
+        start = np.asarray(start, dtype=np.float64)
+        goal = np.asarray(goal, dtype=np.float64)
+        velocity = [] if start_velocity is None else np.asarray(start_velocity).tolist()
+
+        for q, status in (
+            (start, PlanningStatus.INVALID_START),
+            (goal, PlanningStatus.INVALID_GOAL),
+        ):
+            if not self._planner.validate(q.tolist()):
+                return KinodynamicResult(status, None, 0, 0, float("inf"))
+
+        r = self._planner.plan_kinodynamic(
+            start.tolist(),
+            velocity,
+            goal.tolist(),
+            config.time_limit,
+            self._kinodynamic_settings(config),
+        )
+        return KinodynamicResult(
+            status=PlanningStatus.SUCCESS if r.solved else PlanningStatus.FAILED,
+            trajectory=KinodynamicTrajectory(r.trajectory) if r.solved else None,
+            planning_time_ns=r.planning_time_ns,
+            iterations=r.iterations,
+            cost=r.cost,
+            simplify_time_ns=r.simplify_time_ns,
+            start_tree_size=r.start_tree_size,
+            goal_tree_size=r.goal_tree_size,
+            edges_checked=r.edges_checked,
+        )
+
+    def _kinodynamic_settings(self, config: KinodynamicConfig):
+        """Translate a :class:`KinodynamicConfig` + robot limits into the
+        C++ ``KinodynamicSettings`` for this subgroup."""
+        from fetch_planning._ompl_vamp import KinodynamicSettings
+        from fetch_planning.fetch import (
+            BASE_MAX_ACCELERATION,
+            BASE_MAX_SPEED,
+            BASE_MAX_YAW_ACCELERATION,
+            BASE_MAX_YAW_RATE,
+            JOINT_ACCELERATION_LIMITS,
+            JOINT_VELOCITY_LIMITS,
+        )
+
+        arm_joints = [j for j in self._joint_names if j not in self._base_joint_names]
+        vs, acs = config.velocity_scale, config.acceleration_scale
+        s = KinodynamicSettings()
+        s.max_velocity = [JOINT_VELOCITY_LIMITS[j] * vs for j in arm_joints]
+        s.max_acceleration = [JOINT_ACCELERATION_LIMITS[j] * acs for j in arm_joints]
+        s.base_max_speed = BASE_MAX_SPEED * vs
+        s.base_max_acceleration = BASE_MAX_ACCELERATION * acs
+        s.base_max_yaw_rate = BASE_MAX_YAW_RATE * vs
+        s.base_max_yaw_acceleration = BASE_MAX_YAW_ACCELERATION * acs
+        s.allow_reverse = (
+            self._allow_reverse
+            if config.allow_reverse is None
+            else config.allow_reverse
+        )
+        s.rho = config.rho
+        s.limit_aware_duration = config.limit_aware_duration
+        s.max_extension_time = config.max_extension_time
+        s.velocity_sample_scale = config.velocity_sample_scale
+        s.velocity_metric_weight = config.velocity_metric_weight
+        s.rest_sample_probability = config.rest_sample_probability
+        s.spin_probability = config.spin_probability
+        s.heading_tolerance = config.heading_tolerance
+        s.simplify = config.simplify
+        s.simplify_iterations = config.simplify_iterations
+        s.simplify_time_limit = config.simplify_time_limit
+        s.max_iterations = config.max_iterations
+        s.seed = config.seed
+        return s
 
     def simplify_path(self, path: np.ndarray, time_limit: float = 1.0) -> np.ndarray:
         """Run OMPL's shortcut-based path simplifier on ``path``.

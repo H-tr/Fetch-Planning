@@ -29,6 +29,11 @@ Fetch. The key differences from a "default Fetch in VAMP" setup are:
    ships a pre-generated OpenRAVE `ikfast` analytic solver for Fetch's
    8-DOF `arm_with_torso` chain. IKFast gives ~40 µs / solve and dense
    null-space sweeps.
+4. **Kinodynamic planning** — `MotionPlanner.plan_kinodynamic` (FLASK,
+   flatness-based kinodynamic RRT-Connect) returns time-parameterised
+   trajectories that respect joint and base velocity / acceleration
+   limits with an exactly nonholonomic base, ready for feed-forward +
+   PID tracking. See [docs/planning/kinodynamic.md](docs/planning/kinodynamic.md).
 
 Everything else — the public API (`create_ik_solver`, `create_planner`,
 `SE3Pose`, `PlannerConfig`, `IKConfig`, constrained planning via CasADi),

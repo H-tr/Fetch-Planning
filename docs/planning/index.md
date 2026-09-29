@@ -308,4 +308,12 @@ good_goals = goals[mask]
     per-joint velocity and acceleration limits. TOTG (Kunz-Stilman)
     in C++, one call from Python.
 
+-   [__Kinodynamic planning__](kinodynamic.md)
+
+    ---
+
+    FLASK: plan a time-parameterised trajectory directly, with joint
+    and base velocity / acceleration limits and an exactly
+    nonholonomic base. Track it with feed-forward + PID.
+
 </div>

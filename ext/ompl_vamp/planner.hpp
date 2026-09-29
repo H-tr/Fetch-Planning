@@ -52,6 +52,7 @@
 #include "compiled_constraint.hpp"
 #include "compiled_cost.hpp"
 #include "plan_decomposed.hpp"
+#include "plan_kinodynamic.hpp"
 #include "validity.hpp"
 // OMPL — informed trees
 #include <ompl/geometric/planners/informedtrees/ABITstar.h>
@@ -316,6 +317,26 @@ class OmplVampPlanner {
     }
     return plan_geometric(start, goal, planner_name, time_limit, simplify,
                           interpolate, interpolate_count, resolution);
+  }
+
+  // ── Kinodynamic planning (FLASK) ──────────────────────────────────
+  //
+  // Plans a time-parameterised trajectory in the differentially flat
+  // output space (see plan_kinodynamic.hpp): closed-form cubic edges,
+  // SIMD-batched collision checks, velocity / acceleration limits
+  // enforced along every edge.  ``start_velocity`` is either empty
+  // (start at rest) or an active-DOF velocity in the same layout the
+  // returned trajectory reports (base: world-frame x_dot, y_dot,
+  // theta_dot); the goal is always reached at rest.  Constraints and
+  // soft costs registered on this planner are not used.
+  auto plan_kinodynamic(const std::vector<double>& start,
+                        const std::vector<double>& start_velocity,
+                        const std::vector<double>& goal, double time_limit,
+                        const KinodynamicSettings& settings)
+      -> KinodynamicResult {
+    FlaskPlanner flask(env_, active_indices_, frozen_config_, base_dim_,
+                       lower_bounds(), upper_bounds(), settings);
+    return flask.plan(start, start_velocity, goal, time_limit);
   }
 
   auto validate(std::vector<double> config) -> bool {

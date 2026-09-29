@@ -82,6 +82,37 @@ CHAIN_CONFIGS: dict[str, ChainConfig] = {
 BASE_TURNING_RADIUS: float = 0.2
 BASE_REVERSE_ENABLE: bool = True
 
+# Kinodynamic limits used by ``MotionPlanner.plan_kinodynamic`` (FLASK).
+# Joint velocities are the URDF limits.  Joint accelerations and the base
+# limits are conservative defaults rather than datasheet values — tune
+# them to the controllers running on your robot.  The base acceleration
+# is tangential (along the heading); the yaw acceleration only bounds
+# rotate-in-place segments.
+JOINT_VELOCITY_LIMITS: dict[str, float] = {
+    "torso_lift_joint": 0.1,
+    "shoulder_pan_joint": 1.256,
+    "shoulder_lift_joint": 1.454,
+    "upperarm_roll_joint": 1.571,
+    "elbow_flex_joint": 1.521,
+    "forearm_roll_joint": 1.571,
+    "wrist_flex_joint": 2.268,
+    "wrist_roll_joint": 2.268,
+}
+JOINT_ACCELERATION_LIMITS: dict[str, float] = {
+    "torso_lift_joint": 0.2,
+    "shoulder_pan_joint": 1.5,
+    "shoulder_lift_joint": 1.5,
+    "upperarm_roll_joint": 1.5,
+    "elbow_flex_joint": 1.5,
+    "forearm_roll_joint": 1.5,
+    "wrist_flex_joint": 2.0,
+    "wrist_roll_joint": 2.0,
+}
+BASE_MAX_SPEED: float = 0.6  # m/s
+BASE_MAX_ACCELERATION: float = 0.5  # m/s^2
+BASE_MAX_YAW_RATE: float = 1.2  # rad/s
+BASE_MAX_YAW_ACCELERATION: float = 1.5  # rad/s^2
+
 VIZ_URDF_PATH = os.path.join(_RESOURCES_DIR, "fetch.urdf")
 
 # URDF with the three virtual base joints (prismatic x, prismatic y,
