@@ -70,7 +70,7 @@ class IKFastSolver(IKSolverBase):
         if config is None:
             config = IKConfig()
 
-        self._ikfast = importlib.import_module("ikfast_fetch")
+        self._ikfast = importlib.import_module("fetch_planning.ikfast_fetch")
         self._chain_config = chain_config
         self._config = config
 

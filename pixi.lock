@@ -5349,6 +5349,7 @@ packages:
   - pin-pink
   - pre-commit ; extra == 'dev'
   - pybullet ; extra == 'dev'
+  - pytest>=8.0 ; extra == 'dev'
   requires_python: '>=3.10'
 - pypi: ./third_party/foam
   name: foam

@@ -88,12 +88,11 @@ trajectory generation, all behind a unified Python API.
 
 ## Quick Install
 
-For inference — running the planners and IK solvers — just pip install:
+For inference — running the planners and IK solvers — just pip install
+the prebuilt wheel (Linux x86_64, Python 3.10–3.14):
 
 ```bash
-git clone --recursive https://github.com/H-tr/Fetch-Planning.git
-cd Fetch-Planning
-pip install -e .
+pip install fetch-planning
 ```
 
 Three runtime deps: `numpy`, `scipy`, `pink`. No conda, no ROS, no

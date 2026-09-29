@@ -2,16 +2,20 @@
 
 ## Prerequisites
 
-- **Linux** (x86_64)
-- **Python** 3.10–3.12
+- **Linux** (x86_64, glibc 2.28+) on a CPU with AVX2 (Intel Haswell / AMD Zen or newer)
+- **Python** 3.10–3.14
 
 ## Installation
 
-Pre-built wheels are available for Python 3.10–3.12 on Linux x86_64. No local compilation required:
+Pre-built wheels are available for Python 3.10–3.14 on Linux x86_64. No local compilation required:
 
 ```bash
 pip install fetch-planning
 ```
+
+The wheels ship the `ikfast` and `pink` IK backends. The `trac_ik` backend
+needs orocos-kdl and NLopt at build time, so it is only available in the
+[development setup](#development-setup) below.
 
 ## Verify installation
 
@@ -27,18 +31,27 @@ print(f"Planning {'succeeded' if result.success else 'failed'}")
 
 ## Building Wheels from Source
 
-To build distributable wheels for all supported Python versions:
+Wheels are built with [cibuildwheel](https://cibuildwheel.pypa.io) inside
+the manylinux Docker images (configured under `[tool.cibuildwheel]` in
+`pyproject.toml`). To build one locally:
 
 ```bash
-bash scripts/build_wheels.sh
+pipx run cibuildwheel --platform linux --only cp312-manylinux_x86_64
 ```
 
-This uses Docker with the `manylinux_2_28` image to produce portable Linux wheels. The output goes to `dist/wheels/`. It builds:
+The output goes to `wheelhouse/`. Requirements: Docker must be installed and running.
 
-- **fetch-vamp** — Version-specific wheels for Python 3.10, 3.11, 3.12
-- **fetch-planning** — Pure Python wheel (works on any Python 3.10+)
+## Releasing
 
-Requirements: Docker must be installed and running.
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds
+manylinux_2_34 and manylinux_2_28 wheels for every supported Python and
+publishes them to PyPI via Trusted Publishing:
+
+```bash
+# after bumping `version` in pyproject.toml on main
+git tag v0.3.0
+git push origin v0.3.0
+```
 
 ## Development Setup
 
