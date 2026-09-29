@@ -14,52 +14,59 @@ are respected, and the trajectory is as fast as physically possible.
     ---
 
     Finds the fastest feasible velocity profile along the path.
-    Every joint is at its velocity or acceleration limit at every
-    instant — there is no slack left to speed up.
+    At every instant some joint is at its velocity or acceleration
+    limit — there is no slack left to speed up.
 
 -   __Bounded velocity + acceleration__
 
     ---
 
-    Per-joint velocity and acceleration limits are hard constraints.
-    The output trajectory never exceeds them (up to the integrator's
-    numerical tolerance).
+    Per-joint velocity and acceleration limits are hard constraints,
+    enforced on a fine grid along the path (samples between grid
+    points stay within a fraction of a percent of the limits).
 
 -   __C++ hot path__
 
     ---
 
-    The TOTG core is Eigen-only C++17, exposed through a single
-    nanobind call. Python overhead is one round-trip per path.
+    The vendored TOPP-RA core is Eigen-only C++, exposed through a
+    single nanobind call. Python overhead is one round-trip per path.
 
 </div>
 
 ## Algorithm
 
-The implementation is **TOTG** (Time-Optimal Trajectory Generation) by
-Kunz and Stilman (2012), vendored from [MoveIt 2](https://github.com/moveit/moveit2)
-and stripped down to a standalone Eigen-only library. It is the default
-time parameterizer in MoveIt 2.
+The implementation is **TOPP-RA** (Time-Optimal Path Parameterization
+based on Reachability Analysis) by Pham and Pham (2018). The C++ core
+of [toppra](https://github.com/hungpham2511/toppra) (MIT) is vendored
+under `ext/time_parameterization/toppra/` — joint velocity and
+acceleration constraints, its built-in Seidel LP solver, piecewise
+polynomial paths, and the constant-acceleration parametrizer.
 
-The algorithm works in two stages:
+The pipeline has three stages:
 
-1. **Path smoothing** — interior waypoints get a circular blend
-   (controlled by `max_deviation`) so the path is C^1^ continuous.
-   You do **not** need to pre-smooth the path.
-2. **Forward-backward integration** — a sweep forward under maximum
-   acceleration, then backward, finds the time-optimal velocity
-   profile $\dot{s}(s)$ along the blended path.
+1. **Path spline** — the piecewise-linear planner path is resampled
+   every `knot_spacing` along each segment and joined by a natural
+   cubic spline in arc length. The spline passes through every
+   waypoint, rounds the corners, and stays within about
+   `knot_spacing / 10` of the original segments.
+2. **Reachability analysis** — a backward pass over a grid along the
+   path computes, at each grid point, the set of path velocities from
+   which the end can still be reached; a forward pass then picks the
+   largest admissible velocity at each point. Each step is a tiny
+   linear program over the joint limits.
+3. **Timing** — the path velocity profile is integrated with
+   constant path acceleration between grid points, giving $q(t)$ with
+   continuous velocity.
 
-The result is a trajectory $q(t)$ with continuous velocity and bounded
-acceleration that starts and ends at rest.
+The result starts and ends at rest.
 
-!!! note "When to skip OMPL's interpolation step"
+!!! note "Skip OMPL's interpolation step"
 
-    If you plan to time-parameterize the output, pass
-    `interpolate=False` to `plan()` or `PlannerConfig`.  OMPL's
-    interpolation adds collinear waypoints on existing edges — TOTG
-    would just blend and un-blend them, doing redundant work for no
-    benefit.
+    Pass `interpolate=False` to `plan()` or `PlannerConfig` when you
+    time-parameterize the output.  The parameterizer resamples the path
+    itself; OMPL's dense interpolation only adds knots (and cost —
+    the spline fit is cubic in the number of knots).
 
 ## Minimal example
 
@@ -98,8 +105,7 @@ times, positions, velocities, accelerations = traj.sample_uniform(dt=0.01)
 |---|---|---|
 | `max_velocity` | *(required)* | `(ndof,)` per-joint velocity limit (rad/s or m/s) |
 | `max_acceleration` | *(required)* | `(ndof,)` per-joint acceleration limit |
-| `max_deviation` | `0.1` | Radial blend tolerance at corners. Larger = faster cornering, but the trajectory deviates more from the original waypoints. |
-| `time_step` | `1e-3` | Forward-integration step along the path arc length. Smaller = more accurate, slower. |
+| `knot_spacing` | `0.1` | Spline knot spacing along the path (path units). The trajectory deviates from the straight segments by about a tenth of it; smaller follows the corners more tightly but corners more slowly. |
 | `velocity_scaling` | `1.0` | Scale factor in `(0, 1]` applied to `max_velocity`. Use to slow the trajectory without changing the stored limits. |
 | `acceleration_scaling` | `1.0` | Scale factor in `(0, 1]` applied to `max_acceleration`. |
 
@@ -151,7 +157,7 @@ plan(start, goal, simplify=True, interpolate=False)
   (N, ndof) path          geometric, no timing
         │
         ▼
-  TimeOptimalParameterizer.parameterize(path)
+  TimeOptimalParameterizer.parameterize(path)   spline + TOPP-RA
         │
         ▼
   Trajectory               q(t), q̇(t), q̈(t) with bounded vel/acc

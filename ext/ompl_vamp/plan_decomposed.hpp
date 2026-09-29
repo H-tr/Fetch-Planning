@@ -79,12 +79,12 @@ namespace ob = ompl::base;
 namespace og = ompl::geometric;
 
 struct DecomposedConfig {
-  int k_base_candidates = 4;     ///< Phase 1: distinct base-planner seeds to try
-  int j_arm_samples = 24;        ///< Phase 2: arm candidates per intermediate layer
-  int m_base_waypoints = 48;     ///< Phase 2: base path resample count
-  double arm_sigma = 0.8;        ///< Gaussian std (rad) for arm candidate noise
-  double base_rrt_range = 0.6;   ///< RRT-Connect extension range at Level 0 (m)
-  std::uint32_t seed = 0;        ///< 0 = use default
+  int k_base_candidates = 4;  ///< Phase 1: distinct base-planner seeds to try
+  int j_arm_samples = 24;  ///< Phase 2: arm candidates per intermediate layer
+  int m_base_waypoints = 48;    ///< Phase 2: base path resample count
+  double arm_sigma = 0.8;       ///< Gaussian std (rad) for arm candidate noise
+  double base_rrt_range = 0.6;  ///< RRT-Connect extension range at Level 0 (m)
+  std::uint32_t seed = 0;       ///< 0 = use default
 };
 
 struct DecomposedResult {
@@ -92,8 +92,8 @@ struct DecomposedResult {
   std::vector<std::vector<double>> path;
   int64_t planning_time_ns = 0;
   double path_cost = std::numeric_limits<double>::infinity();
-  int base_attempts = 0;          ///< How many base candidates were tried
-  int winning_candidate = -1;     ///< Index of the candidate that succeeded
+  int base_attempts = 0;       ///< How many base candidates were tried
+  int winning_candidate = -1;  ///< Index of the candidate that succeeded
 };
 
 // Build a SE(2) base state space (Dubins or Reeds-Shepp) — same builder
@@ -111,13 +111,15 @@ inline auto make_se2_base_space_for_decomposed(double turning_radius,
 
 namespace decomposed_detail {
 
-inline auto make_full_config(
-    const std::array<double, 3>& base_pose, const std::vector<double>& arm,
-    const std::vector<int>& active_indices,
-    const std::vector<float>& frozen_config, int base_dim, int active_dim)
+inline auto make_full_config(const std::array<double, 3>& base_pose,
+                             const std::vector<double>& arm,
+                             const std::vector<int>& active_indices,
+                             const std::vector<float>& frozen_config,
+                             int base_dim, int active_dim)
     -> Robot::Configuration {
   alignas(Robot::Configuration::S::Alignment)
-      std::array<float, Robot::Configuration::num_scalars_rounded> buf{};
+      std::array<float, Robot::Configuration::num_scalars_rounded>
+          buf{};
   std::copy(frozen_config.begin(), frozen_config.end(), buf.begin());
   buf[active_indices[0]] = static_cast<float>(base_pose[0]);
   buf[active_indices[1]] = static_cast<float>(base_pose[1]);
@@ -163,15 +165,15 @@ inline auto resample_base_path(og::PathGeometric& path, int m)
 /// architecture overview.  ``start_active`` / ``goal_active`` are
 /// active-subgroup configurations with the base (x, y, theta) as the
 /// leading ``base_dim`` entries.
-inline auto plan_decomposed(
-    bool allow_reverse, double turning_radius,
-    const std::array<double, 4>& base_xy_bounds,
-    const std::vector<double>& start_active,
-    const std::vector<double>& goal_active,
-    const std::vector<int>& active_indices,
-    const std::vector<float>& frozen_config, int base_dim, int active_dim,
-    const VampEnv& env, double time_limit,
-    const DecomposedConfig& cfg = {}) -> DecomposedResult {
+inline auto plan_decomposed(bool allow_reverse, double turning_radius,
+                            const std::array<double, 4>& base_xy_bounds,
+                            const std::vector<double>& start_active,
+                            const std::vector<double>& goal_active,
+                            const std::vector<int>& active_indices,
+                            const std::vector<float>& frozen_config,
+                            int base_dim, int active_dim, const VampEnv& env,
+                            double time_limit, const DecomposedConfig& cfg = {})
+    -> DecomposedResult {
   using namespace decomposed_detail;
 
   const auto t0 = std::chrono::steady_clock::now();
@@ -186,8 +188,8 @@ inline auto plan_decomposed(
   }
 
   // ── Phase 1 setup: SE(2) base SpaceInformation ─────────────────────
-  auto base_space = make_se2_base_space_for_decomposed(turning_radius,
-                                                       allow_reverse);
+  auto base_space =
+      make_se2_base_space_for_decomposed(turning_radius, allow_reverse);
   {
     ob::RealVectorBounds bnd(2);
     bnd.setLow(0, base_xy_bounds[0]);
@@ -224,8 +226,7 @@ inline auto plan_decomposed(
       time_limit / std::max(1, cfg.k_base_candidates);
 
   auto elapsed = [&] {
-    return std::chrono::duration<double>(
-               std::chrono::steady_clock::now() - t0)
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
         .count();
   };
 
@@ -248,8 +249,7 @@ inline auto plan_decomposed(
     base_planner->setup();
 
     const double budget_remaining = std::max(0.0, time_limit - elapsed());
-    const double this_budget =
-        std::min(per_base_budget, budget_remaining);
+    const double this_budget = std::min(per_base_budget, budget_remaining);
     auto ptc_time = ob::timedPlannerTerminationCondition(this_budget);
     auto ptc_soln = ob::exactSolnPlannerTerminationCondition(pdef);
     auto ptc = ob::plannerOrTerminationCondition(ptc_time, ptc_soln);
@@ -306,8 +306,8 @@ inline auto plan_decomposed(
     auto push_if_valid = [&](std::vector<std::vector<double>>& lyr,
                              const std::array<double, 3>& base_pose,
                              std::vector<double> cand) {
-      auto q = make_full_config(base_pose, cand, active_indices,
-                                frozen_config, base_dim, active_dim);
+      auto q = make_full_config(base_pose, cand, active_indices, frozen_config,
+                                base_dim, active_dim);
       if (validate_full_static(q, env)) {
         lyr.push_back(std::move(cand));
       }
@@ -373,8 +373,7 @@ inline auto plan_decomposed(
     std::vector<std::vector<double>> dist(M);
     std::vector<std::vector<std::pair<int, int>>> prev(M);
     for (int i = 0; i < M; ++i) {
-      dist[i].assign(layers[i].size(),
-                     std::numeric_limits<double>::infinity());
+      dist[i].assign(layers[i].size(), std::numeric_limits<double>::infinity());
       prev[i].assign(layers[i].size(), {-1, -1});
     }
     dist[0][0] = 0.0;
@@ -402,9 +401,8 @@ inline auto plan_decomposed(
       auto q1 = make_full_config(base_wp[li], layers[li][ii], active_indices,
                                  frozen_config, base_dim, active_dim);
       for (int ij = 0; ij < static_cast<int>(layers[lj].size()); ++ij) {
-        auto q2 = make_full_config(base_wp[lj], layers[lj][ij],
-                                   active_indices, frozen_config, base_dim,
-                                   active_dim);
+        auto q2 = make_full_config(base_wp[lj], layers[lj][ij], active_indices,
+                                   frozen_config, base_dim, active_dim);
         if (!validate_full_motion(q1, q2, env)) continue;
         const double step = arm_euclid(layers[li][ii], layers[lj][ij]);
         const double new_cost = dist[li][ii] + step;
@@ -421,7 +419,10 @@ inline auto plan_decomposed(
         int last_reach = 0;
         for (int i = 0; i < M; ++i) {
           for (double d : dist[i]) {
-            if (std::isfinite(d)) { last_reach = i; break; }
+            if (std::isfinite(d)) {
+              last_reach = i;
+              break;
+            }
           }
         }
         std::fprintf(stderr,

@@ -67,10 +67,10 @@ inline constexpr int kFullDim = Robot::dimension;
 
 // Unwrap a ConstrainedStateSpace wrapper (if present) to get the
 // underlying RealVector state.
-inline auto extract_real_state(const ob::State *state)
-    -> const ob::RealVectorStateSpace::StateType * {
-  if (auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state)) {
+inline auto extract_real_state(const ob::State* state)
+    -> const ob::RealVectorStateSpace::StateType* {
+  if (auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state)) {
     return wrapper->getState()->as<ob::RealVectorStateSpace::StateType>();
   }
   return state->as<ob::RealVectorStateSpace::StateType>();
@@ -103,15 +103,15 @@ inline auto extract_real_state(const ob::State *state)
 /// ``fetch_base_fk.hh`` to ``ext/ompl_vamp/include/vamp/robots/``.
 class BaseOnlyValidityChecker : public ob::StateValidityChecker {
  public:
-  BaseOnlyValidityChecker(const ob::SpaceInformationPtr &si, const VampEnv &env)
+  BaseOnlyValidityChecker(const ob::SpaceInformationPtr& si, const VampEnv& env)
       : ob::StateValidityChecker(si), env_(env) {}
 
-  auto isValid(const ob::State *state) const -> bool override {
-    const auto *wrapper =
-        dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-    const auto *se2 = wrapper
-                          ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
-                          : state->as<ob::SE2StateSpace::StateType>();
+  auto isValid(const ob::State* state) const -> bool override {
+    const auto* wrapper =
+        dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+    const auto* se2 =
+        wrapper ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
+                : state->as<ob::SE2StateSpace::StateType>();
 
     // FetchBase is a 3-DOF VAMP robot — its configuration *is* the SE2
     // pose.  Broadcast into a rake-wide block and call its fkcc, which
@@ -125,12 +125,12 @@ class BaseOnlyValidityChecker : public ob::StateValidityChecker {
   }
 
  private:
-  const VampEnv &env_;
+  const VampEnv& env_;
 };
 
 class SubgroupValidityChecker : public ob::StateValidityChecker {
  public:
-  SubgroupValidityChecker(const ob::SpaceInformationPtr &si, const VampEnv &env,
+  SubgroupValidityChecker(const ob::SpaceInformationPtr& si, const VampEnv& env,
                           std::vector<int> active_indices,
                           std::vector<float> frozen_config, bool has_base,
                           bool base_only = false)
@@ -141,20 +141,20 @@ class SubgroupValidityChecker : public ob::StateValidityChecker {
         has_base_(has_base),
         base_only_(base_only) {}
 
-  auto isValid(const ob::State *state) const -> bool override {
+  auto isValid(const ob::State* state) const -> bool override {
     auto config = expand(state);
     return vamp::planning::validate_motion<Robot, kRake, 1>(config, config,
                                                             env_);
   }
 
  private:
-  const VampEnv &env_;
+  const VampEnv& env_;
   std::vector<int> active_;
   std::vector<float> frozen_;
   bool has_base_;
   bool base_only_;
 
-  auto expand(const ob::State *state) const -> Robot::Configuration {
+  auto expand(const ob::State* state) const -> Robot::Configuration {
     alignas(Robot::Configuration::S::Alignment)
         std::array<float, Robot::Configuration::num_scalars_rounded>
             buf{};
@@ -162,27 +162,24 @@ class SubgroupValidityChecker : public ob::StateValidityChecker {
 
     if (base_only_) {
       // SE2 state only — no compound wrapper, no arm joints.
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *se2 =
-          wrapper
-              ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
-              : state->as<ob::SE2StateSpace::StateType>();
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* se2 =
+          wrapper ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
+                  : state->as<ob::SE2StateSpace::StateType>();
       buf[active_[0]] = static_cast<float>(se2->getX());
       buf[active_[1]] = static_cast<float>(se2->getY());
       buf[active_[2]] = static_cast<float>(se2->getYaw());
     } else if (has_base_) {
       // First 3 active indices are always (base_x, base_y, base_theta)
       // in that order. The rest are RealVector joints.
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *compound =
-          wrapper
-              ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
-              : state->as<ob::CompoundStateSpace::StateType>();
-      const auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
-      const auto *rv =
-          compound->as<ob::RealVectorStateSpace::StateType>(1);
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* compound =
+          wrapper ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
+                  : state->as<ob::CompoundStateSpace::StateType>();
+      const auto* se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      const auto* rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
 
       buf[active_[0]] = static_cast<float>(se2->getX());
       buf[active_[1]] = static_cast<float>(se2->getY());
@@ -191,7 +188,7 @@ class SubgroupValidityChecker : public ob::StateValidityChecker {
         buf[active_[i]] = static_cast<float>(rv->values[i - 3]);
       }
     } else {
-      const auto *rv = extract_real_state(state);
+      const auto* rv = extract_real_state(state);
       for (std::size_t i = 0; i < active_.size(); ++i) {
         buf[active_[i]] = static_cast<float>(rv->values[i]);
       }
@@ -202,7 +199,7 @@ class SubgroupValidityChecker : public ob::StateValidityChecker {
 
 class SubgroupMotionValidator : public ob::MotionValidator {
  public:
-  SubgroupMotionValidator(const ob::SpaceInformationPtr &si, const VampEnv &env,
+  SubgroupMotionValidator(const ob::SpaceInformationPtr& si, const VampEnv& env,
                           std::vector<int> active_indices,
                           std::vector<float> frozen_config, bool has_base,
                           bool base_only = false)
@@ -213,14 +210,14 @@ class SubgroupMotionValidator : public ob::MotionValidator {
         has_base_(has_base),
         base_only_(base_only) {}
 
-  auto checkMotion(const ob::State *s1, const ob::State *s2) const
+  auto checkMotion(const ob::State* s1, const ob::State* s2) const
       -> bool override {
     return vamp::planning::validate_motion<Robot, kRake, Robot::resolution>(
         expand(s1), expand(s2), env_);
   }
 
-  auto checkMotion(const ob::State *s1, const ob::State *s2,
-                   std::pair<ob::State *, double> &last_valid) const
+  auto checkMotion(const ob::State* s1, const ob::State* s2,
+                   std::pair<ob::State*, double>& last_valid) const
       -> bool override {
     last_valid.first = nullptr;
     last_valid.second = 0.0;
@@ -228,38 +225,35 @@ class SubgroupMotionValidator : public ob::MotionValidator {
   }
 
  private:
-  const VampEnv &env_;
+  const VampEnv& env_;
   std::vector<int> active_;
   std::vector<float> frozen_;
   bool has_base_;
   bool base_only_;
 
-  auto expand(const ob::State *state) const -> Robot::Configuration {
+  auto expand(const ob::State* state) const -> Robot::Configuration {
     alignas(Robot::Configuration::S::Alignment)
         std::array<float, Robot::Configuration::num_scalars_rounded>
             buf{};
     std::copy(frozen_.begin(), frozen_.end(), buf.begin());
 
     if (base_only_) {
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *se2 =
-          wrapper
-              ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
-              : state->as<ob::SE2StateSpace::StateType>();
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* se2 =
+          wrapper ? wrapper->getState()->as<ob::SE2StateSpace::StateType>()
+                  : state->as<ob::SE2StateSpace::StateType>();
       buf[active_[0]] = static_cast<float>(se2->getX());
       buf[active_[1]] = static_cast<float>(se2->getY());
       buf[active_[2]] = static_cast<float>(se2->getYaw());
     } else if (has_base_) {
-      const auto *wrapper =
-          dynamic_cast<const ob::WrapperStateSpace::StateType *>(state);
-      const auto *compound =
-          wrapper
-              ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
-              : state->as<ob::CompoundStateSpace::StateType>();
-      const auto *se2 = compound->as<ob::SE2StateSpace::StateType>(0);
-      const auto *rv =
-          compound->as<ob::RealVectorStateSpace::StateType>(1);
+      const auto* wrapper =
+          dynamic_cast<const ob::WrapperStateSpace::StateType*>(state);
+      const auto* compound =
+          wrapper ? wrapper->getState()->as<ob::CompoundStateSpace::StateType>()
+                  : state->as<ob::CompoundStateSpace::StateType>();
+      const auto* se2 = compound->as<ob::SE2StateSpace::StateType>(0);
+      const auto* rv = compound->as<ob::RealVectorStateSpace::StateType>(1);
 
       buf[active_[0]] = static_cast<float>(se2->getX());
       buf[active_[1]] = static_cast<float>(se2->getY());
@@ -268,7 +262,7 @@ class SubgroupMotionValidator : public ob::MotionValidator {
         buf[active_[i]] = static_cast<float>(rv->values[i - 3]);
       }
     } else {
-      const auto *rv = extract_real_state(state);
+      const auto* rv = extract_real_state(state);
       for (std::size_t i = 0; i < active_.size(); ++i) {
         buf[active_[i]] = static_cast<float>(rv->values[i]);
       }

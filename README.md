@@ -29,6 +29,11 @@ Fetch. The key differences from a "default Fetch in VAMP" setup are:
    ships a pre-generated OpenRAVE `ikfast` analytic solver for Fetch's
    8-DOF `arm_with_torso` chain. IKFast gives ~40 µs / solve and dense
    null-space sweeps.
+4. **Kinodynamic planning** — `MotionPlanner.plan_kinodynamic` (FLASK,
+   flatness-based kinodynamic RRT-Connect) returns time-parameterised
+   trajectories that respect joint and base velocity / acceleration
+   limits with an exactly nonholonomic base, ready for feed-forward +
+   PID tracking. See [docs/planning/kinodynamic.md](docs/planning/kinodynamic.md).
 
 Everything else — the public API (`create_ik_solver`, `create_planner`,
 `SE3Pose`, `PlannerConfig`, `IKConfig`, constrained planning via CasADi),
@@ -240,7 +245,7 @@ Fetch-Planning/
 ├── fetch_planning/             # Python package (mirrors autolife_planning/)
 │   ├── fetch.py                # 11-DOF Fetch layout (joint groups, HOME, …)
 │   ├── types/                  # SE3Pose, IKConfig, PlannerConfig, …
-│   ├── trajectory/             # TOTG time parameterization
+│   ├── trajectory/             # TOPP-RA time parameterization
 │   ├── kinematics/             # TracIK / Pink / IKFast solvers + factory
 │   ├── planning/               # MotionPlanner, SymbolicContext, Constraint
 │   ├── envs/                   # PyBullet scene wrapper
@@ -251,6 +256,7 @@ Fetch-Planning/
 │   │   └── include/vamp/robots/
 │   │        ├── fetch_whole_body.hh  # 11-DOF spherized Fetch (base+torso+arm)
 │   │        └── fetch_base.hh        # 3-DOF base-only spherized Fetch
+│   ├── time_parameterization/  # vendored TOPP-RA C++ core (nanobind)
 │   ├── trac_ik/                # vendored TRAC-IK C++ (pybind11)
 │   └── ikfast_fetch/           # ikfast_fetch_module.cpp — OpenRAVE analytic IK
 │
@@ -297,4 +303,7 @@ and pull request against `main`.
 - VAMP is from the KavrakiLab (BSD); we pin `third_party/vamp` to
   upstream unmodified and keep the Fetch-specific spherized models under
   `ext/ompl_vamp/include/vamp/robots/`.
+- The time parameterizer vendors the C++ core of
+  [toppra](https://github.com/hungpham2511/toppra) (MIT, © Hung Pham)
+  unmodified under `ext/time_parameterization/toppra/`.
 - Everything else © 2026 H-tr, same license as Autolife-Planning.

@@ -305,7 +305,15 @@ good_goals = goals[mask]
     ---
 
     Convert geometric paths into time-optimal trajectories with
-    per-joint velocity and acceleration limits. TOTG (Kunz-Stilman)
+    per-joint velocity and acceleration limits. TOPP-RA (Pham & Pham)
     in C++, one call from Python.
+
+-   [__Kinodynamic planning__](kinodynamic.md)
+
+    ---
+
+    FLASK: plan a time-parameterised trajectory directly, with joint
+    and base velocity / acceleration limits and an exactly
+    nonholonomic base. Track it with feed-forward + PID.
 
 </div>

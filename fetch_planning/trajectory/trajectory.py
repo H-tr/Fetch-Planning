@@ -1,6 +1,6 @@
 """Trajectory value type — a time-parameterised configuration stream.
 
-Thin Python veneer over the C++ ``TotgTrajectory`` handle: it keeps the
+Thin Python veneer over the C++ ``ToppraTrajectory`` handle: it keeps the
 handle alive for continuous sampling at arbitrary times, and exposes
 convenience accessors (``duration``, ``__len__`` via ``sample_uniform``,
 array-returning ``sample`` / ``sample_uniform``) that return plain
@@ -16,7 +16,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from fetch_planning._time_parameterization import (
-        TotgTrajectory as _TotgTrajectory,
+        ToppraTrajectory as _ToppraTrajectory,
     )
 
 
@@ -25,12 +25,12 @@ class Trajectory:
     """A time-optimal trajectory produced by
     :class:`~fetch_planning.trajectory.TimeOptimalParameterizer`.
 
-    Instances are immutable handles around a C++ TOTG state machine;
+    Instances are immutable handles around a C++ TOPP-RA trajectory;
     query them via :meth:`position`, :meth:`velocity`,
     :meth:`acceleration`, or one of the batch samplers.
     """
 
-    _handle: "_TotgTrajectory"
+    _handle: "_ToppraTrajectory"
 
     @property
     def duration(self) -> float:

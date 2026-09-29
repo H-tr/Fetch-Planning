@@ -238,3 +238,6 @@ output.json
 .pixi/*
 !.pixi/config.toml
 .claude
+
+# Temporary rendering scratch (not part of the library)
+render_tmp/

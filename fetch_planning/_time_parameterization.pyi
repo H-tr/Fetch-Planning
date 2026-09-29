@@ -6,34 +6,34 @@ file in the installed package.  Stubs mirror the nanobind bindings so
 type checkers can resolve ``import fetch_planning._time_parameterization``.
 """
 
-from typing import Final
-
 import numpy as np
 from numpy.typing import NDArray
 
-DEFAULT_PATH_TOLERANCE: Final[float]
-
-class TotgTrajectory:
+class ToppraTrajectory:
     """Opaque handle to a parameterised trajectory.
 
-    Queries are C¹-consistent: :meth:`position` / :meth:`velocity` /
-    :meth:`acceleration` sample a quadratic segment between the
-    algorithm's internal forward-integration grid points.
+    A cubic spline along the waypoint path, timed by TOPP-RA: the path
+    velocity is piecewise linear in time between grid points (constant
+    path acceleration), so joint velocity is continuous.
     """
 
     @property
     def duration(self) -> float:
         """Total duration in seconds."""
         ...
+
     def position(self, t: float) -> NDArray[np.float64]:
         """Configuration at time ``t`` (seconds)."""
         ...
+
     def velocity(self, t: float) -> NDArray[np.float64]:
         """Joint velocity at time ``t`` (seconds)."""
         ...
+
     def acceleration(self, t: float) -> NDArray[np.float64]:
         """Joint acceleration at time ``t`` (seconds)."""
         ...
+
     def sample(
         self,
         times: NDArray[np.float64],
@@ -42,6 +42,7 @@ class TotgTrajectory:
         of (position, velocity, acceleration).
         """
         ...
+
     def sample_uniform(
         self,
         dt: float,
@@ -62,13 +63,13 @@ def compute_trajectory(
     waypoints: NDArray[np.float64],
     max_velocity: NDArray[np.float64],
     max_acceleration: NDArray[np.float64],
-    max_deviation: float = ...,
-    time_step: float = 1e-3,
-) -> TotgTrajectory | None:
-    """Build a time-optimal trajectory for a piecewise-linear path.
+    knot_spacing: float = 0.1,
+) -> ToppraTrajectory | None:
+    """Time-optimal trajectory along the piecewise-linear path
+    ``waypoints`` ``(N, ndof)``, starting and ending at rest.
 
-    Returns ``None`` if ``waypoints`` has fewer than two rows, the
-    velocity/acceleration bounds are infeasible, or the integrator
-    failed (e.g. a 180-degree reversal in the waypoints).
+    The path is resampled every ``knot_spacing`` and splined; the result
+    deviates from it by about ``knot_spacing / 10``.  Returns ``None`` if
+    TOPP-RA finds no feasible parameterization.
     """
     ...

@@ -91,9 +91,11 @@ class PyBulletSimulator:
         self.client.setRealTimeSimulation(0)
         self.urdf = urdf
 
-        with _DisableRendering(self.client), _RedirectStream(
-            sys.stdout
-        ), _RedirectStream(sys.stderr):
+        with (
+            _DisableRendering(self.client),
+            _RedirectStream(sys.stdout),
+            _RedirectStream(sys.stderr),
+        ):
             self.skel_id = self.client.loadURDF(
                 urdf,
                 basePosition=(0, 0, 0),
@@ -157,9 +159,11 @@ class PyBulletSimulator:
         # Avoid division by zero on degenerate clouds.
         safe_maxes = np.where(maxes == 0, 1.0, maxes)
         colors = 0.8 * (pc / safe_maxes)
-        with _DisableRendering(self.client), _RedirectStream(
-            sys.stdout
-        ), _RedirectStream(sys.stderr):
+        with (
+            _DisableRendering(self.client),
+            _RedirectStream(sys.stdout),
+            _RedirectStream(sys.stderr),
+        ):
             self.client.addUserDebugPoints(
                 pc, colors, pointSize=pointsize, lifeTime=lifetime
             )

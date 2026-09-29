@@ -8,7 +8,13 @@ from .ik import (
     PinkIKConfig,
     SolveType,
 )
-from .planning import PlannerConfig, PlanningResult, PlanningStatus
+from .planning import (
+    KinodynamicConfig,
+    KinodynamicResult,
+    PlannerConfig,
+    PlanningResult,
+    PlanningStatus,
+)
 from .robot import (
     CameraConfig,
     ChainConfig,
@@ -34,4 +40,6 @@ __all__ = [
     "PlannerConfig",
     "PlanningResult",
     "PlanningStatus",
+    "KinodynamicConfig",
+    "KinodynamicResult",
 ]
