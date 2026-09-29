@@ -79,10 +79,12 @@ target_compile_options(_ompl_vamp PRIVATE
 
 install(TARGETS _ompl_vamp LIBRARY DESTINATION fetch_planning)
 
-# ── Time parameterization extension (TOTG, Eigen-only) ───────────────
+# ── Time parameterization extension (TOPP-RA, Eigen-only) ────────────
+
+file(GLOB_RECURSE TOPPRA_SOURCES "ext/time_parameterization/toppra/*.cpp")
 
 nanobind_add_module(_time_parameterization
-    ext/time_parameterization/totg.cpp
+    ${TOPPRA_SOURCES}
     ext/time_parameterization/time_parameterization_ext.cpp
 )
 

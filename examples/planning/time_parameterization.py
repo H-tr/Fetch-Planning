@@ -1,6 +1,6 @@
 """Time parameterization: convert a planned path into an executable trajectory.
 
-Demonstrates the TOTG (Kunz-Stilman, 2012) time-optimal parameterizer.
+Demonstrates the TOPP-RA (Pham & Pham, 2018) time-optimal parameterizer.
 A synthetic 3-DOF zigzag path is parameterized under velocity and
 acceleration limits, then sampled at 100 Hz and printed.
 
@@ -38,7 +38,7 @@ def main(
     vel_limits = np.full(ndof, vel_limit)
     acc_limits = np.full(ndof, acc_limit)
 
-    param = TimeOptimalParameterizer(vel_limits, acc_limits, max_deviation=0.1)
+    param = TimeOptimalParameterizer(vel_limits, acc_limits)
     traj = param.parameterize(path)
 
     print(f"Path: {path.shape[0]} waypoints, {ndof} DOF")
@@ -57,9 +57,12 @@ def main(
     print(f"  Max |velocity|:  {np.abs(velocities).max(axis=0)}")
     print(f"  Max |accel|:     {np.abs(accelerations).max(axis=0)}")
 
-    # Verify bounds.
-    vel_ok = np.all(np.abs(velocities) <= vel_limits + 1e-6)
-    print(f"\n  Velocity within limits: {vel_ok}")
+    # TOPP-RA enforces the limits on a discrete grid along the path, so
+    # samples between grid points may exceed them by a fraction of a percent.
+    vel_ratio = (np.abs(velocities) / vel_limits).max()
+    acc_ratio = (np.abs(accelerations) / acc_limits).max()
+    print(f"\n  Peak |velocity| / limit:     {vel_ratio:.4f}")
+    print(f"  Peak |acceleration| / limit: {acc_ratio:.4f}")
 
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@ numbers from *our* robot and scene rather than from the paper:
 
 * **benchmark** — planning time / success of FLASK versus the existing
   planners, per whole-body leg (vs. multilevel QRRT) and for arm-only
-  motions (vs. RRT-Connect + TOTG, including how often the TOTG-timed
-  trajectory actually collides once its corners are blended).
+  motions (vs. RRT-Connect + TOPP-RA, including how often the timed
+  trajectory actually collides once its corners are rounded).
 * **track** — does feed-forward + PID suffice?  Every FLASK leg is
   executed in closed loop on a simulated robot: velocity-controlled
   joints with actuator lag, and a diff-drive base with actuator lag and
@@ -125,7 +125,7 @@ def make_planners(cloud: np.ndarray, time_limit: float, point_radius: float = 0.
     return wb, arm
 
 
-def arm_totg(planner) -> TimeOptimalParameterizer:
+def arm_toppra(planner) -> TimeOptimalParameterizer:
     names = planner.joint_names
     return TimeOptimalParameterizer(
         np.array([JOINT_VELOCITY_LIMITS[j] for j in names]),
@@ -165,9 +165,9 @@ def benchmark(wb, arm, trials: int, time_limit: float) -> None:
 
     print("\n== Arm only (torso + 7 joints, base parked at the table) ==")
     print(
-        "  RRTC+TOTG: geometric path, then time-optimal parameterisation (corner blends)."
+        "  RRTC+TOPP-RA: geometric path, then time-optimal parameterisation (spline corners)."
     )
-    totg = arm_totg(arm)
+    toppra = arm_toppra(arm)
     for name, s, g in ARM_LEGS:
         k_ms, k_ok, k_dur, k_coll = [], 0, [], 0
         g_ms, g_dur, g_coll = [], [], 0
@@ -182,17 +182,17 @@ def benchmark(wb, arm, trials: int, time_limit: float) -> None:
             t0 = time.perf_counter()
             p = arm.plan(s, g)
             if p.success:
-                traj = totg.parameterize(p.path)
+                traj = toppra.parameterize(p.path)
                 g_ms.append((time.perf_counter() - t0) * 1e3)
                 g_dur.append(traj.duration)
                 _, q, _, _ = traj.sample_uniform(0.005)
                 g_coll += int(not arm.validate_batch(q).all())
         print(
-            f"  {name:16s} FLASK     {k_ok:3d}/{trials} {summarize(k_ms)} | duration {np.median(k_dur):5.2f} s"
+            f"  {name:16s} FLASK        {k_ok:3d}/{trials} {summarize(k_ms)} | duration {np.median(k_dur):5.2f} s"
             f" | colliding {k_coll}/{k_ok}"
         )
         print(
-            f"  {'':16s} RRTC+TOTG {len(g_ms):3d}/{trials} {summarize(g_ms)} | duration {np.median(g_dur):5.2f} s"
+            f"  {'':16s} RRTC+TOPP-RA {len(g_ms):3d}/{trials} {summarize(g_ms)} | duration {np.median(g_dur):5.2f} s"
             f" | colliding {g_coll}/{len(g_ms)}"
         )
 

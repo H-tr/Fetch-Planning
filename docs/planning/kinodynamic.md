@@ -147,37 +147,39 @@ returns an untimed path):
 
 | Leg | FLASK success | FLASK median / p95 | Duration | QRRT success | QRRT median |
 |---|---|---|---|---|---|
-| start → table | 20/20 | 70 / 369 ms | 12.6 s | 18/20 | 6.7 ms |
-| carry 1 | 20/20 | 74 / 394 ms | 14.2 s | 18/20 | 6.1 ms |
-| far → mid | 20/20 | 0.7 / 0.9 ms | 9.1 s | 20/20 | 4.8 ms |
-| mid → sofa | 20/20 | 0.4 / 0.4 ms | 5.9 s | 20/20 | 1.4 ms |
-| sofa → tea | 20/20 | 0.3 / 0.3 ms | 6.5 s | 20/20 | 1.3 ms |
-| tea → table | 20/20 | 22 / 231 ms | 9.8 s | 20/20 | 1.7 ms |
-| carry 2 | 20/20 | 53 / 315 ms | 14.3 s | 18/20 | 7.5 ms |
-| table → home | 20/20 | 63 / 187 ms | 13.5 s | 20/20 | 12.0 ms |
+| start → table | 20/20 | 48 / 238 ms | 12.2 s | 18/20 | 4.1 ms |
+| carry 1 | 20/20 | 63 / 367 ms | 14.3 s | 18/20 | 3.9 ms |
+| far → mid | 20/20 | 0.4 / 0.4 ms | 9.1 s | 20/20 | 2.0 ms |
+| mid → sofa | 20/20 | 0.2 / 0.2 ms | 5.9 s | 20/20 | 1.1 ms |
+| sofa → tea | 20/20 | 0.2 / 0.2 ms | 6.5 s | 20/20 | 0.6 ms |
+| tea → table | 20/20 | 13 / 270 ms | 10.0 s | 20/20 | 1.4 ms |
+| carry 2 | 20/20 | 45 / 186 ms | 13.3 s | 19/20 | 3.9 ms |
+| table → home | 20/20 | 31 / 90 ms | 12.4 s | 20/20 | 7.4 ms |
 
-**Arm only** (base parked at the table) — FLASK vs. RRT-Connect + TOTG,
-and how often the TOTG-timed trajectory collides once its corners are
-blended:
+**Arm only** (base parked at the table) — FLASK vs. RRT-Connect +
+TOPP-RA (planning plus parameterization time), and how often the
+TOPP-RA-timed trajectory collides once its corners are rounded:
 
-| Motion | FLASK median | FLASK duration | RRTC+TOTG median | TOTG duration | TOTG colliding |
+| Motion | FLASK median | FLASK duration | RRTC+TOPP-RA median | TOPP-RA duration | TOPP-RA colliding |
 |---|---|---|---|---|---|
-| tuck → pregrasp | 10.6 ms | 9.8 s | 25.5 ms | 7.2 s | 12/20 |
-| pregrasp → tuck | 13.2 ms | 9.9 s | 35.9 ms | 7.1 s | 13/20 |
-| pregrasp → grasp | 0.04 ms | 1.3 s | 3.3 ms | 0.8 s | 0/20 |
+| tuck → pregrasp | 5.2 ms | 9.8 s | 12.2 ms | 9.5 s | 2/20 |
+| pregrasp → tuck | 5.7 ms | 9.9 s | 11.7 ms | 9.6 s | 4/20 |
+| pregrasp → grasp | 0.02 ms | 1.3 s | 2.3 ms | 0.8 s | 0/20 |
 
 Takeaways:
 
 * Open-floor legs plan in under a millisecond (the direct
   rotate-translate-rotate connection). Legs that manoeuvre the arm next
-  to the table take tens of milliseconds, p95 200–400 ms including up to
+  to the table take tens of milliseconds, p95 90–370 ms including up to
   50 ms of simplification — slower than the geometric planner's median,
-  but with no failures, whereas the geometric planner times out on 10 %
-  of those legs at a 1 s budget.
+  but with no failures, whereas the geometric planner times out on up
+  to 10 % of trials on those legs at a 1 s budget.
 * Simplification (greedy shortcuts + subdivide-and-cut-corners, after
-  VAMP) shortens the table legs by 30–45 %; FLASK trajectories are now
-  about 1.4× TOTG's duration on the arm motions.
-* 2 of 220 FLASK trajectories touched an obstacle when re-checked every
-  5 ms — tighter paths make contacts between collision samples more
-  likely; TOTG-timed geometric paths collided in about 60 % of the long
-  arm motions.
+  VAMP) shortens the table legs by 30–45 %; FLASK trajectories are
+  within 5 % of RRT-Connect + TOPP-RA's duration on the long arm
+  motions.
+* At most 2 of 220 FLASK trajectories touched an obstacle when
+  re-checked every 5 ms across runs — tighter paths make contacts
+  between collision samples more likely. TOPP-RA-timed geometric paths
+  collided in 6 of 40 long arm motions: the spline stays within about
+  0.01 rad of the path, but simplified paths graze obstacles.

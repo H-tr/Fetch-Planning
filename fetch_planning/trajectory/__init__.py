@@ -3,8 +3,7 @@
 Converts a piecewise-linear ``(N, ndof)`` waypoint path — as produced by
 :class:`~fetch_planning.planning.MotionPlanner` — into an executable
 :class:`Trajectory` with continuous velocity and bounded acceleration,
-via the Time-Optimal Trajectory Generation (TOTG) algorithm of Kunz and
-Stilman (2012).
+via TOPP-RA time-optimal path parameterization (Pham & Pham, 2018).
 
 Typical use::
 
@@ -20,7 +19,7 @@ construction and shares the same sampling API.
 """
 
 from .kinodynamic import KinodynamicTrajectory
-from .totg import TimeOptimalParameterizer, parameterize_path
+from .toppra import TimeOptimalParameterizer, parameterize_path
 from .trajectory import Trajectory
 
 __all__ = [

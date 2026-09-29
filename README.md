@@ -245,7 +245,7 @@ Fetch-Planning/
 ├── fetch_planning/             # Python package (mirrors autolife_planning/)
 │   ├── fetch.py                # 11-DOF Fetch layout (joint groups, HOME, …)
 │   ├── types/                  # SE3Pose, IKConfig, PlannerConfig, …
-│   ├── trajectory/             # TOTG time parameterization
+│   ├── trajectory/             # TOPP-RA time parameterization
 │   ├── kinematics/             # TracIK / Pink / IKFast solvers + factory
 │   ├── planning/               # MotionPlanner, SymbolicContext, Constraint
 │   ├── envs/                   # PyBullet scene wrapper
@@ -256,6 +256,7 @@ Fetch-Planning/
 │   │   └── include/vamp/robots/
 │   │        ├── fetch_whole_body.hh  # 11-DOF spherized Fetch (base+torso+arm)
 │   │        └── fetch_base.hh        # 3-DOF base-only spherized Fetch
+│   ├── time_parameterization/  # vendored TOPP-RA C++ core (nanobind)
 │   ├── trac_ik/                # vendored TRAC-IK C++ (pybind11)
 │   └── ikfast_fetch/           # ikfast_fetch_module.cpp — OpenRAVE analytic IK
 │
@@ -302,4 +303,7 @@ and pull request against `main`.
 - VAMP is from the KavrakiLab (BSD); we pin `third_party/vamp` to
   upstream unmodified and keep the Fetch-specific spherized models under
   `ext/ompl_vamp/include/vamp/robots/`.
+- The time parameterizer vendors the C++ core of
+  [toppra](https://github.com/hungpham2511/toppra) (MIT, © Hung Pham)
+  unmodified under `ext/time_parameterization/toppra/`.
 - Everything else © 2026 H-tr, same license as Autolife-Planning.

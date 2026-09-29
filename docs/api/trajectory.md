@@ -2,11 +2,11 @@
 
 ## TimeOptimalParameterizer
 
-::: fetch_planning.trajectory.totg.TimeOptimalParameterizer
+::: fetch_planning.trajectory.toppra.TimeOptimalParameterizer
 
 ### Convenience function
 
-::: fetch_planning.trajectory.totg.parameterize_path
+::: fetch_planning.trajectory.toppra.parameterize_path
 
 ## Trajectory
 
@@ -18,6 +18,6 @@
 
 ## Low-level C++ binding
 
-::: fetch_planning._time_parameterization.TotgTrajectory
+::: fetch_planning._time_parameterization.ToppraTrajectory
 
 ::: fetch_planning._time_parameterization.compute_trajectory

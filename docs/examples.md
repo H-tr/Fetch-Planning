@@ -300,7 +300,7 @@ pixi run -e dev python examples/planning/cost/orientation_lock.py
 ## Time Parameterization
 
 Given a planned path, produce a time-stamped trajectory respecting
-per-joint velocity and acceleration limits via TOTG (Kunz-Stilman).
+per-joint velocity and acceleration limits via TOPP-RA (Pham & Pham).
 
 ```bash
 pixi run -e dev python examples/planning/time_parameterization.py
