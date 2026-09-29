@@ -1,0 +1,86 @@
+name: pip install compatibility
+
+# Verifies that ``pip install fetch-planning`` gives users a working
+# package on every supported Python version and manylinux target.
+#
+# Each matrix entry:
+#   1. Builds the manylinux wheel via cibuildwheel (same toolchain
+#      release.yml uses).
+#   2. Lets cibuildwheel install the wheel in a FRESH venv.
+#   3. Imports the native extensions (fast fail on packaging breakage),
+#      then runs the full pytest suite (correctness).
+#
+# Step 2+3 is exactly what a PyPI user experiences — no source checkout,
+# no pixi, no conda.  If a matrix row goes red, that Python version /
+# glibc target is not actually shippable.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pip-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_test:
+    name: cp${{ matrix.python }} ${{ matrix.manylinux.platform }} — build wheel + pip install + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep both lists in sync with release.yml.
+        python: ["310", "311", "312", "313", "314"]
+        manylinux:
+          - image: manylinux_2_34
+            platform: manylinux_2_34_x86_64
+            before_all: dnf install -y boost-devel eigen3-devel lapack-devel
+            environment: ""
+          - image: manylinux_2_28
+            platform: manylinux_2_28_x86_64
+            before_all: >-
+              dnf install -y curl eigen3-devel lapack-devel &&
+              curl -fsSL https://archives.boost.io/release/1.82.0/source/boost_1_82_0.tar.gz -o /tmp/boost_1_82_0.tar.gz &&
+              tar -xzf /tmp/boost_1_82_0.tar.gz -C /tmp &&
+              cd /tmp/boost_1_82_0 &&
+              ./bootstrap.sh --prefix=/opt/boost-1.82.0 --with-libraries=serialization,filesystem,system,program_options &&
+              ./b2 -d0 -j$(nproc) link=static runtime-link=shared threading=multi variant=release cxxstd=17 cxxflags=-fPIC install
+            environment: >-
+              BOOST_ROOT=/opt/boost-1.82.0
+              Boost_ROOT=/opt/boost-1.82.0
+              CMAKE_ARGS='-DBoost_NO_SYSTEM_PATHS=ON -DBoost_USE_STATIC_LIBS=ON -DBOOST_ROOT=/opt/boost-1.82.0 -DBoost_ROOT=/opt/boost-1.82.0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build wheel + run post-install tests in a fresh venv
+        uses: pypa/cibuildwheel@v3.4.1
+        env:
+          CIBW_BUILD: cp${{ matrix.python }}-manylinux_x86_64
+          CIBW_MANYLINUX_X86_64_IMAGE: ${{ matrix.manylinux.image }}
+          CIBW_BEFORE_ALL_LINUX: ${{ matrix.manylinux.before_all }}
+          CIBW_ENVIRONMENT_LINUX: ${{ matrix.manylinux.environment }}
+          CIBW_TEST_REQUIRES: pytest
+          # {project} expands to the checked-out source tree inside the
+          # manylinux container — lets pytest find tests/ without needing
+          # the repo to be importable (the wheel provides the package).
+          # TRAC-IK and pybullet tests skip themselves: the wheel ships
+          # without pytracik, and pybullet is not a runtime dependency.
+          CIBW_TEST_COMMAND: >
+            python -c "import fetch_planning._ompl_vamp, fetch_planning._time_parameterization, fetch_planning.ikfast_fetch" &&
+            python -m pytest -v -ra {project}/tests
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: wheel-cp${{ matrix.python }}-${{ matrix.manylinux.platform }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: warn

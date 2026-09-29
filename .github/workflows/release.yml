@@ -26,6 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Keep both lists in sync with pip-compat.yml.
         python: [cp310, cp311, cp312, cp313, cp314]
         manylinux:
           - image: manylinux_2_34
