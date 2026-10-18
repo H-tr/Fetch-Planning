@@ -183,6 +183,12 @@ class OmplVampPlanner:
             allow_reverse: Select the SE(2) base state space.  ``False``
                 (default) picks ``DubinsStateSpace`` (forward-only); ``True``
                 picks ``ReedsSheppStateSpace`` (reverse permitted).
+
+        Raises:
+            ValueError: If ``frozen_config`` does not have 11 entries, an
+                index is outside ``[0, 11)``, or ``base_dim`` is neither 0
+                nor 3 with the base joints 0, 1, 2 leading
+                ``active_indices``.
         """
         ...
 
@@ -503,5 +509,11 @@ class OmplVampPlanner:
                 in ``active_indices``.
             base_dim: How many leading active indices form the
                 nonholonomic base (0 = arm-only, 3 = SE2 base).
+
+        Raises:
+            ValueError: If ``frozen_config`` does not have 11 entries, an
+                index is outside ``[0, 11)``, or ``base_dim`` is neither 0
+                nor 3 with the base joints 0, 1, 2 leading
+                ``active_indices``.
         """
         ...

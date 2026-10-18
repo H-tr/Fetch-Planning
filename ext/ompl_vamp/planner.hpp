@@ -169,18 +169,8 @@ class OmplVampPlanner {
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config, int base_dim = 0,
                   double turning_radius = 0.2, bool allow_reverse = false)
-      : active_dim_(static_cast<int>(active_indices.size())),
-        active_indices_(std::move(active_indices)),
-        base_dim_(base_dim),
-        turning_radius_(turning_radius),
-        allow_reverse_(allow_reverse) {
-    frozen_config_.resize(frozen_config.size());
-    for (std::size_t i = 0; i < frozen_config.size(); ++i)
-      frozen_config_[i] = static_cast<float>(frozen_config[i]);
-
-    has_base_ = base_dim_ > 0;
-    base_only_ = has_base_ && (active_dim_ == base_dim_);
-    build_state_space();
+      : turning_radius_(turning_radius), allow_reverse_(allow_reverse) {
+    set_subgroup(std::move(active_indices), std::move(frozen_config), base_dim);
   }
 
   /// Configure base workspace bounds (x, y, theta). Call before plan()
@@ -533,6 +523,20 @@ class OmplVampPlanner {
   ///     the nonholonomic base (0 = arm-only, 3 = SE2 base).
   void set_subgroup(std::vector<int> active_indices,
                     std::vector<double> frozen_config, int base_dim) {
+    const bool base_leads = active_indices.size() >= 3 &&
+                            active_indices[0] == 0 && active_indices[1] == 1 &&
+                            active_indices[2] == 2;
+    if (frozen_config.size() != Robot::dimension ||
+        std::any_of(active_indices.begin(), active_indices.end(),
+                    [](int i) {
+                      return i < 0 || i >= static_cast<int>(Robot::dimension);
+                    }) ||
+        !(base_dim == 0 || (base_dim == 3 && base_leads)))
+      throw std::invalid_argument(
+          "set_subgroup: frozen_config needs " +
+          std::to_string(Robot::dimension) +
+          " entries, active_indices must index them, and base_dim is 0 or 3 "
+          "with the base joints 0, 1, 2 leading active_indices.");
     active_dim_ = static_cast<int>(active_indices.size());
     active_indices_ = std::move(active_indices);
     base_dim_ = base_dim;

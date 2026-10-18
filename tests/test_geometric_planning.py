@@ -156,3 +156,16 @@ def test_base_subgroup_checks_the_whole_body(planner_name):
     planner.set_base_bounds(-1.0, 4.0, -2.0, 2.0)
     assert not planner.validate(np.array([1.0, 0.0, 0.0]))
     assert not planner.plan(np.zeros(3), np.array([2.0, 0.0, 0.0])).success
+
+
+def test_subgroup_inputs_are_checked():
+    home = HOME_JOINTS.tolist()
+    with pytest.raises(ValueError):
+        OmplVampPlanner([4, 5], home[:10])
+    with pytest.raises(ValueError):
+        OmplVampPlanner([4, 11], home)
+    with pytest.raises(ValueError):
+        OmplVampPlanner([0, 1], home, 3)
+    planner = OmplVampPlanner([4, 5], home)
+    with pytest.raises(ValueError):
+        planner.set_subgroup([4, 5], home + [0.0], 0)
