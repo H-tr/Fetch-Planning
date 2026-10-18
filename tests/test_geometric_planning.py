@@ -136,3 +136,23 @@ def test_approximate_solutions_are_not_solved(planner_name):
     assert planner.validate([-1.2]) and planner.validate([1.2])
     result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0, 0.0)
     assert not result.solved
+
+
+def head_height_beam():
+    """A beam across the whole workspace at x = 1, above the base."""
+    y, z = np.meshgrid(grid(-3.0, 3.0), grid(1.0, 1.6))
+    return np.stack([np.ones(y.size), y.ravel(), z.ravel()], 1).astype(np.float32)
+
+
+@pytest.mark.parametrize("planner_name", ["qrrt", "rrtc"])
+def test_base_subgroup_checks_the_whole_body(planner_name):
+    """The base fits under the beam, the frozen torso and head do not:
+    there is no path."""
+    planner = create_planner(
+        "fetch_base",
+        config=PlannerConfig(planner_name=planner_name, time_limit=0.5),
+        pointcloud=head_height_beam(),
+    )
+    planner.set_base_bounds(-1.0, 4.0, -2.0, 2.0)
+    assert not planner.validate(np.array([1.0, 0.0, 0.0]))
+    assert not planner.plan(np.zeros(3), np.array([2.0, 0.0, 0.0])).success

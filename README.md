@@ -141,7 +141,7 @@ alongside the OMPL bridge, not in a fork.
       base transform before the arm FK. Mirrors the pattern used by
       `autolife_body_coupled.hh`.
 - [x] `ext/ompl_vamp/include/vamp/robots/fetch_base.hh` — 3-DOF base-only
-      spherized model for base-only planning subgroups.
+      spherized model for the base level of the multilevel planners.
 - [x] `third_party/vamp` pinned to upstream `H-tr/vamp@main` (no fork).
 
 ### Phase 3 — OMPL frontend adaptations  ✅

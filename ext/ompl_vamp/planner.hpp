@@ -906,19 +906,21 @@ class OmplVampPlanner {
                        bool simplify, bool interpolate,
                        int interpolate_count = 0, double resolution = 64.0)
       -> PlanResult {
-    // Build a 2-level hierarchy:
+    // With arm joints active, a 2-level hierarchy:
     //   Level 0: SE(2) (base pose, non-holonomic — Dubins or Reeds-Shepp)
     //   Level 1: Compound(SE(2) + R^N) (full active space)
-    // OMPL's ProjectionFactory cannot auto-detect this mapping because
-    // the base subclass carries STATE_SPACE_DUBINS / STATE_SPACE_REEDS_SHEPP
-    // rather than STATE_SPACE_SE2.  We supply a custom projection that
-    // works directly on the state layout (all three share SE2 storage).
+    // A base-only subgroup is the single SE(2) level.  The top level checks
+    // the whole body, with the frozen joints, along the space's curves.
+    // OMPL's ProjectionFactory cannot auto-detect the SE2 x R^N -> SE2
+    // mapping because the base subclass carries STATE_SPACE_DUBINS /
+    // STATE_SPACE_REEDS_SHEPP rather than STATE_SPACE_SE2; OMPL's own
+    // Projection_SE2RN_SE2 works when constructed manually, since both
+    // spaces inherit SE2StateSpace's state layout.
     std::vector<ob::SpaceInformationPtr> si_vec;
     std::vector<om::ProjectionPtr> proj_vec;
 
-    // Level 0: SE(2) base ────────────────────────────────────────────
-    auto level0_se2 = make_se2_base_space(turning_radius_, allow_reverse_);
-    {
+    if (!base_only_) {
+      auto level0_se2 = make_se2_base_space(turning_radius_, allow_reverse_);
       ob::RealVectorBounds bnd(2);
       bnd.setLow(0, base_x_lo_);
       bnd.setHigh(0, base_x_hi_);
@@ -937,18 +939,7 @@ class OmplVampPlanner {
           std::make_shared<BaseOnlyValidityChecker>(si, env_));
       si->setup();
       si_vec.push_back(si);
-    }
 
-    // Level 1: Compound(SE(2) + R^N)  (only when arm joints are active) ──
-    if (!base_only_) {
-      si_vec.push_back(make_space_information_(false).first);
-
-      // OMPL's own Projection_SE2RN_SE2 works here because both
-      // ReedsSheppStateSpace and DubinsStateSpace inherit from
-      // SE2StateSpace (same state layout).  The ProjectionFactory
-      // can't auto-pick it since the concrete space's type tag is
-      // STATE_SPACE_REEDS_SHEPP / STATE_SPACE_DUBINS, but constructing
-      // it manually bypasses that check.
       auto proj =
           std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_se2);
       // Eagerly initialise the fiber space (sampler + scratch state),
@@ -956,6 +947,7 @@ class OmplVampPlanner {
       proj->makeFiberSpace();
       proj_vec.push_back(proj);
     }
+    si_vec.push_back(make_space_information_(false).first);
 
     // Create multilevel planner and problem definition ─────────────────
     auto& top_si = si_vec.back();
