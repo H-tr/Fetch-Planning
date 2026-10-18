@@ -104,6 +104,9 @@ links, then lift the path into the whole body.  The informed planners
 `blitstar`) need a single state space, so OMPL rejects them for the
 base + arm subgroups.
 
+A plan succeeds only on an exact solution: OMPL's approximate
+solutions, which stop short of the goal, are reported as failures.
+
 ## Minimal example
 
 <video controls loop muted playsinline width="100%">

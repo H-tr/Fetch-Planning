@@ -122,3 +122,17 @@ def test_multilevel_planners_need_the_base():
     start = planner.extract_config(HOME_JOINTS)
     with pytest.raises(ValueError):
         planner.plan(start, start)
+
+
+@pytest.mark.parametrize("planner_name", ["rrt", "rrtc"])
+def test_approximate_solutions_are_not_solved(planner_name):
+    """With only the shoulder pan active, a pillar in the swing of the
+    straight arm cuts the goal off: OMPL's approximate solution stops at the
+    pillar."""
+    frozen = HOME_JOINTS.copy()
+    frozen[5:] = 0.0
+    planner = OmplVampPlanner([4], frozen.tolist(), 0, BASE_TURNING_RADIUS, False)
+    planner.add_sphere([0.8, 0.0, 1.1], 0.1)
+    assert planner.validate([-1.2]) and planner.validate([1.2])
+    result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0, 0.0)
+    assert not result.solved
