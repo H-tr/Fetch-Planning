@@ -63,7 +63,10 @@ SE(2) level is [`DubinsStateSpace`](https://ompl.kavrakilab.org/classompl_1_1bas
 (reverse allowed), selected by `BASE_REVERSE_ENABLE` in
 `fetch_planning/fetch.py`. Path simplification, interpolation, and
 the AO objective all stay on the curve, so the output is directly
-executable by a diff-drive controller.
+executable by a diff-drive controller. The motion validator samples
+each edge along that curve at VAMP's resolution (32 samples per unit
+of configuration-space length) and checks the whole body, with the
+inactive joints at their frozen values.
 
 ## Supported planners
 

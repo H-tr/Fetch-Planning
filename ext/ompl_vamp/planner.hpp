@@ -357,8 +357,8 @@ class OmplVampPlanner {
   // Same SIMD primitive the motion-edge validator uses for interpolated
   // samples — we just feed it independent configs per lane.
   //
-  // If a packed block fails, we fall back to per-lane single-state
-  // checks so the caller still gets one bool per input config.  In the
+  // If a packed block fails, its configurations are re-checked one by
+  // one so the caller still gets one bool per input config.  In the
   // common case (most configs valid) this is O(N/kRake) SIMD calls;
   // worst case (every block fails) degrades to the baseline N single
   // checks.
@@ -381,49 +381,14 @@ class OmplVampPlanner {
       }
     }
 
-    // ``ConfigurationBlock<kRake>::pack`` expects row-major layout
-    // where row ``d`` (joint dimension) holds kRake scalars — the
-    // lane values for that joint across the rake.  So
-    //     buf[d * kRake + lane] = full_config(configs[lane])[d].
-    alignas(vamp::FloatVectorAlignment)
-        std::array<float, Robot::dimension * kRake>
-            blk_buf{};
-
-    auto write_lane = [&](std::size_t lane, const std::vector<double>& cfg) {
-      for (std::size_t d = 0; d < Robot::dimension; ++d)
-        blk_buf[d * kRake + lane] = frozen_config_[d];
-      for (std::size_t k = 0; k < active_indices_.size(); ++k)
-        blk_buf[active_indices_[k] * kRake + lane] = static_cast<float>(cfg[k]);
-    };
-
+    const auto sub = subgroup_();
     for (std::size_t i = 0; i < n; i += kRake) {
       const std::size_t chunk = std::min(kRake, n - i);
+      const bool block_valid = samples_valid(
+          env_, static_cast<int>(chunk),
+          [&](int lane, float* q) { sub.expand(configs[i + lane].data(), q); });
       for (std::size_t lane = 0; lane < chunk; ++lane)
-        write_lane(lane, configs[i + lane]);
-      // Pad the tail lanes by repeating the first real config in this
-      // block.  Padding with a real (tested) config preserves
-      // correctness: if the packed block passes, every real lane is
-      // valid; if it fails we only run the per-lane fallback over the
-      // real lanes, so the padded lanes never appear in the output.
-      for (std::size_t lane = chunk; lane < kRake; ++lane)
-        write_lane(lane, configs[i]);
-
-      typename Robot::template ConfigurationBlock<kRake> block(blk_buf.data());
-
-      const bool block_valid =
-          env_.attachments ? Robot::template fkcc_attach<kRake>(env_, block)
-                           : Robot::template fkcc<kRake>(env_, block);
-
-      if (block_valid) {
-        for (std::size_t lane = 0; lane < chunk; ++lane)
-          result[i + lane] = true;
-      } else {
-        for (std::size_t lane = 0; lane < chunk; ++lane) {
-          auto q = build_full_config_(configs[i + lane]);
-          result[i + lane] =
-              vamp::planning::validate_motion<Robot, kRake, 1>(q, q, env_);
-        }
-      }
+        result[i + lane] = block_valid || validate(configs[i + lane]);
     }
 
     return result;
@@ -647,6 +612,10 @@ class OmplVampPlanner {
 
   void sync_env() { env_ = VampEnv(float_env_); }
 
+  auto subgroup_() const -> Subgroup {
+    return {active_indices_, frozen_config_, has_base_, base_only_};
+  }
+
   // Expand an active-DOF config into a full-body VAMP Configuration,
   // injecting the frozen pose for joints outside ``active_indices_``.
   auto build_full_config_(const std::vector<double>& config) const
@@ -686,11 +655,11 @@ class OmplVampPlanner {
     } else {
       si = std::make_shared<ob::SpaceInformation>(space_);
     }
-    si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
-        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+    si->setStateValidityChecker(
+        std::make_shared<SubgroupValidityChecker>(si, env_, subgroup_()));
     if (!constrained) {
       si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
-          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
+          si, env_, subgroup_(), turning_radius_));
     }
     si->setup();
     return {si, active_space};
@@ -964,12 +933,7 @@ class OmplVampPlanner {
 
     // Level 1: Compound(SE(2) + R^N)  (only when arm joints are active) ──
     if (!base_only_) {
-      auto si = std::make_shared<ob::SpaceInformation>(space_);
-      si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
-          si, env_, active_indices_, frozen_config_,
-          /*has_base=*/true, /*base_only=*/false));
-      si->setup();
-      si_vec.push_back(si);
+      si_vec.push_back(make_space_information_(false).first);
 
       // OMPL's own Projection_SE2RN_SE2 works here because both
       // ReedsSheppStateSpace and DubinsStateSpace inherit from
@@ -1131,28 +1095,7 @@ class OmplVampPlanner {
       check_constraint_satisfaction(goal, "goal");
     }
 
-    ob::StateSpacePtr active_space = space_;
-    ob::SpaceInformationPtr si;
-    if (constrained) {
-      auto intersection = std::make_shared<ob::ConstraintIntersection>(
-          static_cast<unsigned int>(active_dim_), constraints_);
-      auto css =
-          std::make_shared<ob::ProjectedStateSpace>(space_, intersection);
-      auto csi = std::make_shared<ob::ConstrainedSpaceInformation>(css);
-      css->setup();
-      si = csi;
-      active_space = css;
-    } else {
-      si = std::make_shared<ob::SpaceInformation>(space_);
-    }
-
-    si->setStateValidityChecker(std::make_shared<SubgroupValidityChecker>(
-        si, env_, active_indices_, frozen_config_, has_base_, base_only_));
-    if (!constrained) {
-      si->setMotionValidator(std::make_shared<SubgroupMotionValidator>(
-          si, env_, active_indices_, frozen_config_, has_base_, base_only_));
-    }
-    si->setup();
+    auto [si, active_space] = make_space_information_(constrained);
 
     og::SimpleSetup ss(si);
     ss.setPlanner(create_geometric_planner(si, planner_name));
