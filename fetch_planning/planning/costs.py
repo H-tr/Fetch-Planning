@@ -14,9 +14,9 @@ so the next run is essentially free.  At plan time the C++ planner
 per-state cost along each edge, which is the standard soft-cost
 treatment for RRT*-family planners.
 
-For whole-body / base-including subgroups the planner uses OMPL
-multilevel planning with a car-like SE(2) base space (Dubins or
-Reeds-Shepp).  Custom costs are *added* on top of the default
+For whole-body / base-including subgroups the planner uses a
+car-like SE(2) base space (Dubins or Reeds-Shepp).  Custom costs are
+*added* on top of the default
 path-length objective — they augment the non-holonomic distance, they
 do not replace it.
 

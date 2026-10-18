@@ -15,12 +15,12 @@ The full configuration vector is 11-DOF:
 * ``[3:4]`` — ``torso_lift_joint``
 * ``[4:11]`` — 7-DOF arm (shoulder_pan → wrist_roll)
 
-When the active subgroup contains any base joint the planner switches
-to OMPL multilevel planning (fiber bundles) with the hierarchy
-``SE2 → SE2 × R^N``.  The SE(2) space is either ``DubinsStateSpace``
-(forward-only, default) or ``ReedsSheppStateSpace`` (reverse allowed),
-selected by ``BASE_REVERSE_ENABLE``.  When only arm joints are active
-a plain ``RealVectorStateSpace`` is used.  See
+When the active subgroup contains any base joint the planner plans in
+``SE2 × R^N``, where the SE(2) space is either ``DubinsStateSpace``
+(forward-only) or ``ReedsSheppStateSpace`` (reverse allowed), selected
+by ``BASE_REVERSE_ENABLE``; these subgroups also accept OMPL's
+multilevel planners (fiber bundles, ``SE2 → SE2 × R^N``).  When only
+arm joints are active a plain ``RealVectorStateSpace`` is used.  See
 :mod:`fetch_planning.planning.motion_planner`.
 """
 
@@ -162,8 +162,8 @@ _ARM_JOINTS = [
     "wrist_roll_joint",
 ]
 
-# Subgroups whose "joints" list contains any of _BASE_JOINTS use multilevel
-# planning (SE2 → SE2 × R^N). See ext/ompl_vamp/planner.hpp.
+# Subgroups whose "joints" list contains any of _BASE_JOINTS plan the base
+# in a Dubins / Reeds-Shepp space. See ext/ompl_vamp/planner.hpp.
 PLANNING_SUBGROUPS = {
     # Mobile base only (3 DOF, nonholonomic)
     "fetch_base": {"dof": 3, "joints": _BASE_JOINTS},

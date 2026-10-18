@@ -8,6 +8,7 @@ from fetch_planning._ompl_vamp import OmplVampPlanner
 from fetch_planning.fetch import BASE_TURNING_RADIUS, HOME_JOINTS
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
+from fetch_planning.types.planning import BASE_PLANNERS, GEOMETRIC_PLANNERS
 
 
 def grid(lo, hi):
@@ -41,7 +42,7 @@ def test_base_motions_follow_the_curve(allow_reverse):
 @pytest.mark.parametrize(
     "planner_name", ["pdst", "kpiece", "bkpiece", "lbkpiece", "stride"]
 )
-@pytest.mark.parametrize("subgroup", ["fetch_arm_with_torso"])
+@pytest.mark.parametrize("subgroup", ["fetch_arm_with_torso", "fetch_base"])
 def test_partial_motions_keep_valid_states(subgroup, planner_name):
     """These planners grow from the last valid state of a blocked motion,
     found along the base curve with the base."""
@@ -64,3 +65,60 @@ def test_partial_motions_keep_valid_states(subgroup, planner_name):
         )
         assert result.success
         assert planner.validate_batch(result.path).all()
+
+
+def test_rrtc_runs_rrt_connect_with_the_base(capfd):
+    planner = create_planner(
+        "fetch_whole_body", config=PlannerConfig(planner_name="rrtc", time_limit=1.0)
+    )
+    goal = HOME_JOINTS.copy()
+    goal[:3] = [1.0, 1.0, np.pi / 2]
+    assert planner.plan(HOME_JOINTS, goal).success
+    out = capfd.readouterr().out
+    assert "RRTConnect" in out and "QRRT" not in out
+
+
+# OMPL's BLIT* throws "Asked to remove vertex from reverse children that is
+# currently not a child" on short motions (and on about 1 in 20 random ones).
+BLITSTAR_BUG = pytest.mark.xfail(raises=RuntimeError, reason="OMPL BLIT* bug")
+
+
+@pytest.mark.parametrize(
+    "planner_name",
+    [
+        pytest.param(name, marks=BLITSTAR_BUG) if name == "blitstar" else name
+        for name in GEOMETRIC_PLANNERS
+    ],
+)
+def test_every_planner_runs(planner_name):
+    """Every accepted name builds and runs its planner."""
+    planner = create_planner(
+        "fetch_arm", config=PlannerConfig(planner_name=planner_name, time_limit=0.1)
+    )
+    start = planner.extract_config(HOME_JOINTS)
+    goal = start.copy()
+    goal[-1] += 0.5
+    planner.plan(start, goal)
+
+
+@pytest.mark.parametrize("planner_name", BASE_PLANNERS + ("kpiece",))
+def test_planners_run_with_the_base(planner_name):
+    planner = create_planner(
+        "fetch_base_arm",
+        config=PlannerConfig(
+            planner_name=planner_name, time_limit=2.0, interpolate=False
+        ),
+    )
+    start = planner.extract_config(HOME_JOINTS)
+    goal = start.copy()
+    goal[:3] = [1.0, 1.0, np.pi / 2]
+    result = planner.plan(start, goal)
+    assert result.success
+    assert planner.validate_batch(result.path).all()
+
+
+def test_multilevel_planners_need_the_base():
+    planner = create_planner("fetch_arm", config=PlannerConfig(planner_name="qrrt"))
+    start = planner.extract_config(HOME_JOINTS)
+    with pytest.raises(ValueError):
+        planner.plan(start, start)

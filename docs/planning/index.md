@@ -7,7 +7,7 @@
     ---
 
     All of [OMPL](https://ompl.kavrakilab.org/)'s mature sampling-based
-    planners (26 exposed), driven by one uniform Python call. No glue
+    planners (30 geometric, 4 multilevel), driven by one uniform Python call. No glue
     code to swap planners — change a string.
 
 -   __VAMP backend__
@@ -78,11 +78,12 @@ accepts any of:
 
     | Family | Planners |
     |---|---|
-    | RRT | `rrtc`, `rrt`, `trrt`, `bitrrt`, `strrtstar`, `lbtrrt` |
+    | RRT | `rrtc`, `rrt`, `trrt`, `bitrrt`, `lbtrrt` |
     | KPIECE | `kpiece`, `bkpiece`, `lbkpiece` |
     | PRM | `prm`, `lazyprm`, `spars`, `spars2` |
     | Exploration | `est`, `biest`, `sbl`, `stride`, `pdst` |
     | RRT\*-feasible | `rrtsharp`, `rrtxstatic` |
+    | Multilevel | `qrrt`, `qmp` |
 
 === "Asymptotically optimal (keep refining until budget)"
 
@@ -92,6 +93,16 @@ accepts any of:
     | Informed trees | `bitstar`, `abitstar`, `aitstar`, `eitstar`, `blitstar` |
     | FMT | `fmt`, `bfmt` |
     | PRM\* | `prmstar`, `lazyprmstar` |
+    | Multilevel | `qrrtstar`, `qmpstar` |
+
+Every geometric planner runs on the subgroup's own state space.  The
+multilevel planners (OMPL fiber bundles) and `decomposed` (a base
+roadmap plus a layered arm schedule) need the base in the subgroup;
+the multilevel planners plan the base first in SE(2) against the base
+links, then lift the path into the whole body.  The informed planners
+(`informed_rrtstar`, `bitstar`, `abitstar`, `aitstar`, `eitstar`,
+`blitstar`) need a single state space, so OMPL rejects them for the
+base + arm subgroups.
 
 ## Minimal example
 
@@ -283,8 +294,8 @@ good_goals = goals[mask]
 
     Plan over a slice of the 11-DOF body — arm, arm + torso, base,
     base + arm, whole body — with the remaining joints pinned to any
-    11-DOF stance. Base-including subgroups use nonholonomic
-    multilevel planning.
+    11-DOF stance. Base-including subgroups plan the base along
+    Dubins / Reeds-Shepp curves.
 
 -   [__Manifold planning__](manifold.md)
 

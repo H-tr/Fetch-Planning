@@ -282,10 +282,9 @@ class OmplVampPlanner:
         search of asymptotically-optimal planners (RRT*, BIT*, AIT*,
         QRRT*, …).  Multiple costs are summed with their ``weight``.
 
-        For whole-body / base-including subgroups the cost is set on
-        the multilevel top SpaceInformation and combined with the
-        Dubins / Reeds-Shepp path-length term (which lives in the
-        state-space distance) — non-holonomic shaping is preserved.
+        For whole-body / base-including subgroups the cost is combined
+        with the Dubins / Reeds-Shepp path-length term (which lives in
+        the state-space distance) — non-holonomic shaping is preserved.
 
         Args:
             so_path: Path to the compiled ``.so`` file.
@@ -321,7 +320,10 @@ class OmplVampPlanner:
             start: Active-DOF start configuration (length :meth:`dimension`).
             goal: Active-DOF goal configuration (length :meth:`dimension`).
             planner_name: OMPL planner identifier (e.g. ``"rrtc"``,
-                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).
+                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).  Subgroups with
+                the base also accept the multilevel planners ``"qrrt"``,
+                ``"qrrtstar"``, ``"qmp"``, ``"qmpstar"`` and
+                ``"decomposed"``.
             time_limit: Solver time limit in seconds.
             simplify: If true, run ``SimpleSetup::simplifySolution`` on the
                 returned path.

@@ -6,21 +6,20 @@
  * constants are hardcoded here.
  *
  * When the active subgroup includes base joints (base_dim > 0), the
- * planner uses OMPL's **multilevel planning** framework (fiber bundles)
- * with a hierarchy RS → Compound(RS + R^N).  The lower RS level plans
- * the base in isolation; the upper level adds the arm as the fiber,
- * lifting the base path into the full configuration space.
+ * state space is the SE(2) base space, composed with a
+ * RealVectorStateSpace when arm joints are active.  The base state space
+ * is selected by the ``allow_reverse`` flag: ``ReedsSheppStateSpace``
+ * (shortest-of-48 curves, may include reverse) when reverse is allowed,
+ * else ``DubinsStateSpace`` (forward-only, 6 curve families), which
+ * structurally forbids reverse motion.  Arm-only subgroups use a
+ * RealVectorStateSpace, optionally projected onto a constraint manifold
+ * via CasADi-compiled constraints.
  *
- * The base state space is selected by the ``allow_reverse`` flag:
- * ``ReedsSheppStateSpace`` (shortest-of-48 curves, may include reverse)
- * when reverse is allowed, else ``DubinsStateSpace`` (forward-only, 6
- * curve families).  Dubins is the default — it structurally forbids
- * reverse motion, eliminating the need for any reverse-cost penalty.
- *
- * When the subgroup is arm-only, the planner uses a standard OMPL
- * geometric SimpleSetup with a RealVectorStateSpace (optionally
- * projected onto a constraint manifold via CasADi-compiled
- * constraints).
+ * Every OMPL geometric planner runs on that space through SimpleSetup.
+ * Subgroups with the base can also use OMPL's **multilevel planners**
+ * (``qrrt``, ``qrrtstar``, ``qmp``, ``qmpstar``; fiber bundles) with the
+ * hierarchy SE(2) → Compound(SE(2) + R^N), whose lower level checks only
+ * the base links, and the ``decomposed`` planner (plan_decomposed.hpp).
  */
 
 #pragma once
@@ -83,7 +82,6 @@
 #include <ompl/geometric/planners/rrt/RRTXstatic.h>
 #include <ompl/geometric/planners/rrt/RRTsharp.h>
 #include <ompl/geometric/planners/rrt/RRTstar.h>
-#include <ompl/geometric/planners/rrt/STRRTstar.h>
 #include <ompl/geometric/planners/rrt/TRRT.h>
 // OMPL — exploration-based
 #include <ompl/geometric/planners/est/BiEST.h>
@@ -112,7 +110,7 @@ namespace fetch_planning {
 namespace og = ompl::geometric;
 namespace om = ompl::multilevel;
 
-/// Build the SE(2) base state space used by the multilevel planner.
+/// Build the SE(2) base state space of subgroups with the base.
 ///
 /// * ``allow_reverse = false`` (default) — ``DubinsStateSpace`` with
 ///   asymmetric distance.  Every tree extension uses a forward-only
@@ -161,9 +159,6 @@ class OmplVampPlanner {
   ///     active_indices are pinned to these during collision checks.
   /// @param base_dim  How many of the *leading* active indices form
   ///     the nonholonomic base (0 = arm-only, 3 = SE2 base).
-  ///     When > 0, the planner uses OMPL multilevel planning with a
-  ///     hierarchy RS → RS × R^N.  When 0, a standard geometric
-  ///     planner on RealVectorStateSpace is used.
   /// @param turning_radius  Minimum turning radius (m).  Ignored when
   ///     base_dim == 0.
   /// @param allow_reverse  Select the SE(2) base state space.  When
@@ -264,10 +259,10 @@ class OmplVampPlanner {
   // (RRT*, BIT*, AIT*, QRRT* …).  Without a user-supplied cost the
   // planner falls back to OMPL's default path-length objective.
   //
-  // For multilevel plans the cost objective is set on the top
-  // SpaceInformation's ProblemDefinition, added on top of the base
-  // path-length term so the non-holonomic distance metric still
-  // contributes to motionCost.
+  // For subgroups with the base the costs are added on top of the
+  // path-length term, so the non-holonomic distance metric still
+  // contributes to motionCost; multilevel plans set the objective on the
+  // top level's ProblemDefinition.
   //
   // Multiple costs are summed via MultiOptimizationObjective with
   // the weights supplied at add time.
@@ -300,6 +295,9 @@ class OmplVampPlanner {
             const std::string& planner_name, double time_limit, bool simplify,
             bool interpolate, int interpolate_count = 0,
             double resolution = 64.0) -> PlanResult {
+    const bool multilevel = planner_name == "qrrt" ||
+                            planner_name == "qrrtstar" ||
+                            planner_name == "qmp" || planner_name == "qmpstar";
     if (has_base_) {
       if (!constraints_.empty()) {
         throw std::invalid_argument(
@@ -312,8 +310,13 @@ class OmplVampPlanner {
                                        interpolate, interpolate_count,
                                        resolution);
       }
-      return plan_multilevel(start, goal, planner_name, time_limit, simplify,
-                             interpolate, interpolate_count, resolution);
+      if (multilevel) {
+        return plan_multilevel(start, goal, planner_name, time_limit, simplify,
+                               interpolate, interpolate_count, resolution);
+      }
+    } else if (multilevel) {
+      throw std::invalid_argument("plan: multilevel planner '" + planner_name +
+                                  "' needs the base in the subgroup.");
     }
     return plan_geometric(start, goal, planner_name, time_limit, simplify,
                           interpolate, interpolate_count, resolution);
@@ -817,6 +820,11 @@ class OmplVampPlanner {
         compound->addSubspace(rv, 1.0);
         compound->lock();
         compound->setLongestValidSegmentFraction(0.02);
+        // Planners that grid a projection (KPIECE, PDST, STRIDE, ...) use
+        // the base position.
+        compound->registerDefaultProjection(
+            std::make_shared<ob::SubspaceProjectionEvaluator>(compound.get(),
+                                                              0));
         space_ = compound;
       }
     } else {
@@ -960,13 +968,12 @@ class OmplVampPlanner {
     write_scoped_state(ompl_goal, goal);
     pdef->setStartAndGoalStates(ompl_start, ompl_goal);
 
-    // Soft costs are integrated by QRRTStar/RRTstar/BIT* family on top
-    // of the base SE(2) distance.  No reverse penalty lives in the
-    // distance metric — forward-only behavior comes from the curve
-    // selection (Dubins) rather than from a cost weighting.
+    // Soft costs are integrated by QRRTStar / QMPStar on top of the base
+    // SE(2) distance.  No reverse penalty lives in the distance metric —
+    // forward-only behavior comes from the curve selection (Dubins)
+    // rather than from a cost weighting.
     if (!cost_libs_.empty()) {
-      pdef->setOptimizationObjective(
-          build_objective(top_si, /*active_top=*/true));
+      pdef->setOptimizationObjective(build_objective(top_si));
     }
 
     planner->setProblemDefinition(pdef);
@@ -1080,7 +1087,7 @@ class OmplVampPlanner {
     return out;
   }
 
-  // ── Geometric planning (arm-only subgroups, with constraints) ─────
+  // ── Geometric planning (every subgroup; constraints arm-only) ─────
 
   auto plan_geometric(const std::vector<double>& start,
                       const std::vector<double>& goal,
@@ -1110,7 +1117,7 @@ class OmplVampPlanner {
     // optimal planners; for planners that don't read it the call is
     // harmless.
     if (!cost_libs_.empty()) {
-      ss.setOptimizationObjective(build_objective(si, /*active_top=*/false));
+      ss.setOptimizationObjective(build_objective(si));
     }
 
     auto t0 = std::chrono::steady_clock::now();
@@ -1172,9 +1179,8 @@ class OmplVampPlanner {
 
   static void reject_incompatible_planner(const std::string& name) {
     static const std::vector<std::string> bad = {
-        "bitstar",  "abitstar",   "aitstar",  "eitstar",
-        "blitstar", "fmt",        "bfmt",     "informed_rrtstar",
-        "rrtsharp", "rrtxstatic", "strrtstar"};
+        "bitstar", "abitstar", "aitstar",          "eitstar",  "blitstar",
+        "fmt",     "bfmt",     "informed_rrtstar", "rrtsharp", "rrtxstatic"};
     for (const auto& b : bad) {
       if (name == b) {
         throw std::invalid_argument(
@@ -1188,12 +1194,11 @@ class OmplVampPlanner {
 
   // ── Objective builder ────────────────────────────────────────────
   //
-  // Combine every CompiledCost into a single OMPL objective.  The
-  // ``active_top`` flag selects the right state-extraction layout for
-  // the multilevel "top" SpaceInformation (Compound when arm is
-  // active, SE2-only when base-only) versus the geometric / arm-only
-  // RealVector layout.  The dlopen'd ``CostLibrary`` is reused; only
-  // the thin adapter is rebuilt per plan() call.
+  // Combine every CompiledCost into a single OMPL objective, reading
+  // states in the subgroup's layout (Compound when base and arm are
+  // active, SE2-only when base-only, RealVector when arm-only).  The
+  // dlopen'd ``CostLibrary`` is reused; only the thin adapter is rebuilt
+  // per plan() call.
   //
   // For base-including subgroups we ALWAYS keep a path-length term as
   // the baseline so the SE(2) distance contribution (Dubins / RS) stays
@@ -1201,14 +1206,14 @@ class OmplVampPlanner {
   // Without this, a CompiledCost would silently shadow the car-like
   // distance in motionCost and the non-holonomic shaping would only
   // affect nearest-neighbour selection, not rewiring decisions.
-  auto build_objective(const ob::SpaceInformationPtr& si, bool active_top) const
+  auto build_objective(const ob::SpaceInformationPtr& si) const
       -> std::shared_ptr<ob::OptimizationObjective> {
     const CompiledCost::Layout layout =
-        active_top ? (base_only_ ? CompiledCost::Layout::kSE2Only
-                                 : CompiledCost::Layout::kCompound)
-                   : CompiledCost::Layout::kPlain;
+        has_base_ ? (base_only_ ? CompiledCost::Layout::kSE2Only
+                                : CompiledCost::Layout::kCompound)
+                  : CompiledCost::Layout::kPlain;
 
-    const bool keep_path_length = active_top && has_base_;
+    const bool keep_path_length = has_base_;
 
     if (cost_libs_.size() == 1 && !keep_path_length) {
       return std::make_shared<CompiledCost>(si, cost_libs_[0], cost_weights_[0],
@@ -1242,40 +1247,17 @@ class OmplVampPlanner {
       std::vector<ob::SpaceInformationPtr>& si_vec,
       std::vector<om::ProjectionPtr>& proj_vec, const std::string& name)
       -> ob::PlannerPtr {
-    // Use the 3-arg constructor whenever we have custom projections
-    // (proj_vec.size() == si_vec.size() - 1); otherwise fall back to the
-    // 1-arg auto-detection constructor (used when there is a single
-    // level with no projection needed).
-    const bool use_custom = !proj_vec.empty();
-
-    // Direct multilevel planner names.
-    if (name == "qrrt")
-      return use_custom ? std::make_shared<om::QRRT>(si_vec, proj_vec)
-                        : std::make_shared<om::QRRT>(si_vec);
-    if (name == "qmp")
-      return use_custom ? std::make_shared<om::QMP>(si_vec, proj_vec)
-                        : std::make_shared<om::QMP>(si_vec);
-    if (name == "qmpstar")
-      return use_custom ? std::make_shared<om::QMPStar>(si_vec, proj_vec)
-                        : std::make_shared<om::QMPStar>(si_vec);
+    if (proj_vec.empty()) {  // the base alone: a single level
+      if (name == "qrrt") return std::make_shared<om::QRRT>(si_vec);
+      if (name == "qrrtstar") return std::make_shared<om::QRRTStar>(si_vec);
+      if (name == "qmp") return std::make_shared<om::QMP>(si_vec);
+      return std::make_shared<om::QMPStar>(si_vec);
+    }
+    if (name == "qrrt") return std::make_shared<om::QRRT>(si_vec, proj_vec);
     if (name == "qrrtstar")
-      return use_custom ? std::make_shared<om::QRRTStar>(si_vec, proj_vec)
-                        : std::make_shared<om::QRRTStar>(si_vec);
-    // PRM-style names → QMP.
-    if (name == "prm" || name == "lazyprm")
-      return use_custom ? std::make_shared<om::QMP>(si_vec, proj_vec)
-                        : std::make_shared<om::QMP>(si_vec);
-    if (name == "prmstar" || name == "lazyprmstar")
-      return use_custom ? std::make_shared<om::QMPStar>(si_vec, proj_vec)
-                        : std::make_shared<om::QMPStar>(si_vec);
-    // Non-optimal tree names → QRRT.
-    if (name == "rrtc" || name == "rrtconnect" || name == "rrt")
-      return use_custom ? std::make_shared<om::QRRT>(si_vec, proj_vec)
-                        : std::make_shared<om::QRRT>(si_vec);
-    // Default (including all "star/optimal" geometric names) → QRRTStar.
-    // The reverse penalty only bites for asymptotically optimal planners.
-    return use_custom ? std::make_shared<om::QRRTStar>(si_vec, proj_vec)
-                      : std::make_shared<om::QRRTStar>(si_vec);
+      return std::make_shared<om::QRRTStar>(si_vec, proj_vec);
+    if (name == "qmp") return std::make_shared<om::QMP>(si_vec, proj_vec);
+    return std::make_shared<om::QMPStar>(si_vec, proj_vec);
   }
 
   static auto create_geometric_planner(const ob::SpaceInformationPtr& si,
@@ -1289,7 +1271,6 @@ class OmplVampPlanner {
       return std::make_shared<og::InformedRRTstar>(si);
     if (name == "rrtsharp") return std::make_shared<og::RRTsharp>(si);
     if (name == "rrtxstatic") return std::make_shared<og::RRTXstatic>(si);
-    if (name == "strrtstar") return std::make_shared<og::STRRTstar>(si);
     if (name == "lbtrrt") return std::make_shared<og::LBTRRT>(si);
     if (name == "trrt") return std::make_shared<og::TRRT>(si);
     if (name == "bitrrt") return std::make_shared<og::BiTRRT>(si);
