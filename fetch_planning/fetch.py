@@ -73,7 +73,7 @@ CHAIN_CONFIGS: dict[str, ChainConfig] = {
 # (real minimum is ~0 since it can rotate in place, but small non-zero
 # keeps the curves smooth for the planner and visualization).
 # BASE_REVERSE_ENABLE selects the SE(2) base state space:
-#   False (default) — DubinsStateSpace, forward-only curves; the robot
+#   False — DubinsStateSpace, forward-only curves; the robot
 #     never reverses.  Matches "reverse only when necessary" with the
 #     necessary set being empty — suitable for open indoor spaces.
 #   True  — ReedsSheppStateSpace, unpenalized shortest-of-48 curves,

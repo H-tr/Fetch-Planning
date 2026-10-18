@@ -83,7 +83,7 @@ single import.
 ┌───────────────────▼────────────────────────────────────────────┐
 │              VAMP backend  (header-only, SIMD)                 │
 │                                                                │
-│   third_party/vamp  →  H-tr/vamp @ fetch-planning branch       │
+│   third_party/vamp  →  H-tr/vamp main (= KavrakiLab/vamp)      │
 │   vamp::robots::FetchWholeBody  (11 DOF spherized model)       │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -152,7 +152,7 @@ alongside the OMPL bridge, not in a fork.
 - [x] `ext/ompl_vamp/planner.hpp`: when `active_indices` include any
       base joint, constructs `CompoundStateSpace(SE2StateSpace(ρ) +
       RealVectorStateSpace(N))` where the SE2 component is either
-      `DubinsStateSpace` (forward-only, default) or `ReedsSheppStateSpace`
+      `DubinsStateSpace` (forward-only) or `ReedsSheppStateSpace`
       (reverse allowed). Both inherit from `SE2StateSpace`, so OMPL's
       built-in distance/interpolate functions make every planner respect
       the nonholonomic constraint for free.
