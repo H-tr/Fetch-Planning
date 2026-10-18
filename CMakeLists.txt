@@ -62,6 +62,9 @@ if(TARGET simdxorshift)
     target_compile_options(simdxorshift PRIVATE ${FETCH_ARCH_FLAGS_LIST})
 endif()
 
+# cddlib backs VAMP's polytope obstacles, which our extension does not use.
+set_target_properties(cdd PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 # VAMP headers (upstream, header-only) plus our own robot model headers
 # shipped alongside the ompl_vamp extension. The custom header layout
 # mirrors vamp's (include/vamp/robots/<name>.hh) so code in ext/ompl_vamp/

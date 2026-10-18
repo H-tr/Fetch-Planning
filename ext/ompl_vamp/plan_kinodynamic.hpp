@@ -708,32 +708,16 @@ class FlaskPlanner {
                s_.heading_tolerance + 1e-6;
   }
 
-  /// Interleaved SIMD collision check of ``n`` time samples: block ``i``
-  /// holds samples ``{i, i + m, i + 2m, ...}`` so early blocks already
-  /// span the whole edge (Alg. 3's spatially distributed batches).
+  /// SIMD collision check of ``n`` time samples (FLASK Alg. 3).
   auto collision_free(const flat::Segment& seg, int n) const -> bool {
-    const int m = (n + static_cast<int>(kRake) - 1) / static_cast<int>(kRake);
     std::vector<double> q(active_dim_);
-    alignas(vamp::FloatVectorAlignment)
-        std::array<float, Robot::dimension * kRake>
-            buf{};
-    for (int blk = 0; blk < m; ++blk) {
-      for (std::size_t lane = 0; lane < kRake; ++lane) {
-        const int idx = std::min(static_cast<int>(lane) * m + blk, n - 1);
-        flat::eval_segment(seg, seg.T * idx / (n - 1), base_dim_, q.data(),
-                           nullptr, nullptr);
-        for (std::size_t d = 0; d < Robot::dimension; ++d)
-          buf[d * kRake + lane] = frozen_config_[d];
-        for (int k = 0; k < active_dim_; ++k)
-          buf[active_indices_[k] * kRake + lane] = static_cast<float>(q[k]);
-      }
-      typename Robot::template ConfigurationBlock<kRake> block(buf.data());
-      const bool ok = env_.attachments
-                          ? Robot::template fkcc_attach<kRake>(env_, block)
-                          : Robot::template fkcc<kRake>(env_, block);
-      if (!ok) return false;
-    }
-    return true;
+    return samples_valid(env_, n, [&](int i, float* full) {
+      flat::eval_segment(seg, seg.T * i / (n - 1), base_dim_, q.data(), nullptr,
+                         nullptr);
+      std::copy(frozen_config_.begin(), frozen_config_.end(), full);
+      for (int k = 0; k < active_dim_; ++k)
+        full[active_indices_[k]] = static_cast<float>(q[k]);
+    });
   }
 
   // ── Tree growth ────────────────────────────────────────────────────

@@ -76,7 +76,7 @@ def main(
 
     planner = create_planner(
         "fetch_whole_body",
-        config=PlannerConfig(planner_name="rrtc", time_limit=time_limit),
+        config=PlannerConfig(planner_name="qrrt", time_limit=time_limit),
         pointcloud=pointcloud_arg,
     )
     planner.set_base_bounds(-4.0, 4.0, -4.0, 4.0)

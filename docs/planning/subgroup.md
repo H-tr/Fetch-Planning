@@ -79,15 +79,16 @@ automatically:
   (forward-only) or [`ReedsSheppStateSpace`](https://ompl.kavrakilab.org/classompl_1_1base_1_1ReedsSheppStateSpace.html)
   (reverse allowed), selected by `BASE_REVERSE_ENABLE` in
   `fetch_planning/fetch.py`.
-- The planner uses OMPL **multilevel planning** (fiber bundles)
-  with the hierarchy `SE2 → SE2 × R^N`, and `QRRTStar` as the
-  default asymptotically-optimal tree planner — its distance
-  metric already includes the car-like arc length, so any user
-  cost you add is composed with the non-holonomic shaping rather
-  than replacing it.
+- Every geometric planner (`rrtc`, `rrtstar`, `prm`, …) runs on that
+  space. The OMPL **multilevel planners** (`qrrt`, `qrrtstar`, `qmp`,
+  `qmpstar`; fiber bundles) plan the base first, against the base
+  links, with the hierarchy `SE2 → SE2 × R^N`. The objective keeps
+  the car-like arc length, so any user cost you add is composed with
+  the non-holonomic shaping rather than replacing it.
 - Tree extension, rewire, path simplification, and interpolation
-  all stay on the curve. The output path is directly executable by
-  a diff-drive controller.
+  all stay on the curve, and the motion validator checks each edge
+  along it. The output path is directly executable by a diff-drive
+  controller.
 
 Two planner helpers are specific to base-including subgroups:
 

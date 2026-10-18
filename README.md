@@ -83,7 +83,7 @@ single import.
 ┌───────────────────▼────────────────────────────────────────────┐
 │              VAMP backend  (header-only, SIMD)                 │
 │                                                                │
-│   third_party/vamp  →  H-tr/vamp @ fetch-planning branch       │
+│   third_party/vamp  →  H-tr/vamp main (= KavrakiLab/vamp)      │
 │   vamp::robots::FetchWholeBody  (11 DOF spherized model)       │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -141,7 +141,7 @@ alongside the OMPL bridge, not in a fork.
       base transform before the arm FK. Mirrors the pattern used by
       `autolife_body_coupled.hh`.
 - [x] `ext/ompl_vamp/include/vamp/robots/fetch_base.hh` — 3-DOF base-only
-      spherized model for base-only planning subgroups.
+      spherized model for the base level of the multilevel planners.
 - [x] `third_party/vamp` pinned to upstream `H-tr/vamp@main` (no fork).
 
 ### Phase 3 — OMPL frontend adaptations  ✅
@@ -152,14 +152,13 @@ alongside the OMPL bridge, not in a fork.
 - [x] `ext/ompl_vamp/planner.hpp`: when `active_indices` include any
       base joint, constructs `CompoundStateSpace(SE2StateSpace(ρ) +
       RealVectorStateSpace(N))` where the SE2 component is either
-      `DubinsStateSpace` (forward-only, default) or `ReedsSheppStateSpace`
+      `DubinsStateSpace` (forward-only) or `ReedsSheppStateSpace`
       (reverse allowed). Both inherit from `SE2StateSpace`, so OMPL's
       built-in distance/interpolate functions make every planner respect
       the nonholonomic constraint for free.
-- [x] Motion validator for the compound space: reads the base state via
-      `state->as<CompoundState>()->as<SE2StateSpace::StateType>(0)`, the
-      arm state via `...->as<RealVectorStateSpace::StateType>(1)`, packs
-      both into a `FetchWholeBody::Configuration`, and calls VAMP.
+- [x] Motion validator for the compound space: samples each edge along
+      the Dubins / Reeds-Shepp curve of the base (straight in the arm
+      joints) at VAMP's resolution and checks every sample with VAMP.
 
 ### Phase 4 — IK backends  ✅
 

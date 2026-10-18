@@ -65,20 +65,23 @@ def plan_and_show(
     return env.sim.client.isConnected()
 
 
-def main(planner_name: str = "bitstar", time_limit: float = 0.5):
+def main(planner_name: str = "rrtc", time_limit: float = 0.5):
     """Run the subgroup sweep with the chosen OMPL planner.
 
     Available planner names (pick one and pass as ``--planner_name``):
 
-        RRT family ........... rrtc / rrtconnect, rrt, rrtstar,
-                               informed_rrtstar, rrtsharp, rrtxstatic,
-                               strrtstar, lbtrrt, trrt, bitrrt
+        RRT family ........... rrtc, rrt, rrtstar, informed_rrtstar,
+                               rrtsharp, rrtxstatic, lbtrrt, trrt, bitrrt
         Informed trees ....... bitstar, abitstar, aitstar, eitstar, blitstar
         FMT .................. fmt, bfmt
         KPIECE ............... kpiece, bkpiece, lbkpiece
         PRM family ........... prm, prmstar, lazyprm, lazyprmstar,
                                spars, spars2
         Exploration-based .... est, biest, sbl, stride, pdst
+        Multilevel ........... qrrt, qrrtstar, qmp, qmpstar (base subgroups)
+
+    The informed planners (``informed_rrtstar`` and the informed trees)
+    need a single state space: they reject the base + arm subgroups.
 
     Single-query feasibility planners (``rrtc``, ``rrt``, ``kpiece``,
     ``est``, …) terminate as soon as they find any valid path, usually

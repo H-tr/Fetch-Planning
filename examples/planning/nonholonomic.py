@@ -423,15 +423,13 @@ def play_segments(env, segments, gripper_link_idx, fps=60.0):
 def main(
     pcd_stride: int = 1,
     visualize: bool = True,
-    nav_planner: str = "rrtc",
+    nav_planner: str = "qrrt",
     nav_time: float = NAV_TIME,
 ) -> None:
     print("=" * 65)
     print("  Whole-Body Multilevel Motion Planning Demo")
     print("  11 DOF: SE(2) -> Compound(SE(2) + R^8)  (OMPL fiber bundles)")
-    print(
-        f"  Planner: QRRT (from '{nav_planner}')  |  Budget: {nav_time * 1000:.0f} ms"
-    )
+    print(f"  Planner: {nav_planner}  |  Budget: {nav_time * 1000:.0f} ms")
     print("=" * 65)
 
     env = PyBulletEnv(fetch_robot_config, visualize=visualize)

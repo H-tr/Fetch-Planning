@@ -168,10 +168,10 @@ and edge query, so any plan you get back is valid for the *whole*
 robot, not just the subgroup.
 
 Subgroups that include the mobile base joints (`fetch_base`,
-`fetch_base_arm`, `fetch_whole_body`) automatically switch to
-OMPL multilevel planning with Dubins (or Reeds-Shepp) curves on the
-SE(2) base — so the returned base path respects the nonholonomic
-differential-drive constraint.
+`fetch_base_arm`, `fetch_whole_body`) plan the SE(2) base along
+Dubins (or Reeds-Shepp) curves — so the returned base path respects
+the nonholonomic differential-drive constraint — and also accept
+OMPL's multilevel planners (`qrrt`, `qrrtstar`, `qmp`, `qmpstar`).
 
 ### Available subgroups
 
@@ -219,11 +219,12 @@ pixi run -e dev python examples/planning/subgroup.py --planner_name prm
 ## Nonholonomic Whole-Body Planning
 
 For tasks that need the base and arm to move simultaneously, drive
-the `fetch_whole_body` subgroup.  OMPL's multilevel framework plans
-the SE(2) base pose on the lower level (Dubins / Reeds-Shepp) and
-lifts the result into the 11-DOF compound space on the upper level,
-so the returned path has a forward-only (or reverse-capable) base
-trajectory with the arm changing shape alongside it.
+the `fetch_whole_body` subgroup.  With a multilevel planner
+(`qrrt`, used by both demos), OMPL plans the SE(2) base pose on the
+lower level (Dubins / Reeds-Shepp) and lifts the result into the
+11-DOF compound space on the upper level, so the returned path has a
+forward-only (or reverse-capable) base trajectory with the arm
+changing shape alongside it.
 
 ```bash
 pixi run -e dev python examples/planning/multilevel_single_step.py

@@ -3,21 +3,17 @@
 # Generates two VAMP robot models and installs them in
 # ext/ompl_vamp/include/vamp/robots/ (NOT inside the vamp submodule):
 #
-#   - FetchWholeBody  (11 DOF)  from fetch_spherized.urdf + fetch.srdf
+#   - FetchWholeBody  (11 DOF)  from fetch_whole_body.urdf + fetch.srdf
 #   - FetchBase       (3  DOF)  from fetch_base.urdf + fetch_base.srdf
 #                               (trimmed URDF — base_link only, no arm)
 #                               Used as a proper-relaxation collision
 #                               model at the lower level of multilevel
 #                               whole-body planning.
 #
-# WARNING: cricket's CppAD codegen is not bit-stable across runs — the
-# emitted formulas are mathematically equivalent but use different
-# intermediate variable orderings and slightly different floating-point
-# rounding.  Regenerating fetch_whole_body.hh can shift sphere positions
-# by ~1e-6 m, which is enough to flip borderline collision checks for
-# HOME_JOINTS in tight scenes.  After regenerating, rerun the demos and
-# expect to need to re-tune any tight collision waypoints.  Regenerate
-# only when the URDF or SRDF actually changes.
+# With the pinned cricket, regenerating from the committed URDFs, SRDFs
+# and configs reproduces the committed headers (the conda-forge CppAD
+# prints a unary minus as `0. - x`).  Regenerate when the URDF or SRDF
+# changes.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -34,7 +30,7 @@ FK_DEST="$ROOT/ext/ompl_vamp/include/vamp/robots"
 echo "[1/3] Distributing robot descriptions..."
 CRICKET_RES="$CRICKET/resources/fetch"
 mkdir -p "$CRICKET_RES"
-cp "$RESOURCES/fetch_spherized.urdf" "$CRICKET_RES/"
+cp "$RESOURCES/fetch_whole_body.urdf" "$CRICKET_RES/"
 cp "$RESOURCES/fetch.srdf"           "$CRICKET_RES/"
 cp "$RESOURCES/fetch_base.urdf"      "$CRICKET_RES/"
 cp "$RESOURCES/fetch_base.srdf"      "$CRICKET_RES/"
