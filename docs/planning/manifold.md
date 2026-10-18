@@ -225,5 +225,5 @@ the helpers.
 
 Manifold constraints are only supported for arm-only subgroups
 (`fetch_arm`, `fetch_arm_with_torso`); base-including subgroups
-plan on the Dubins / Reeds-Shepp base space, which does not compose
+run on the multilevel nonholonomic backend, which does not compose
 with `ProjectedStateSpace`.

@@ -10,50 +10,6 @@ if TYPE_CHECKING:
     from fetch_planning.trajectory import KinodynamicTrajectory
 
 
-# OMPL geometric planners, by family.
-GEOMETRIC_PLANNERS = (
-    # RRT family
-    "rrtc",
-    "rrt",
-    "rrtstar",
-    "informed_rrtstar",
-    "rrtsharp",
-    "rrtxstatic",
-    "lbtrrt",
-    "trrt",
-    "bitrrt",
-    # Informed trees (asymptotically optimal)
-    "bitstar",
-    "abitstar",
-    "aitstar",
-    "eitstar",
-    "blitstar",
-    # FMT
-    "fmt",
-    "bfmt",
-    # KPIECE
-    "kpiece",
-    "bkpiece",
-    "lbkpiece",
-    # PRM family
-    "prm",
-    "prmstar",
-    "lazyprm",
-    "lazyprmstar",
-    "spars",
-    "spars2",
-    # Exploration-based
-    "est",
-    "biest",
-    "sbl",
-    "stride",
-    "pdst",
-)
-# OMPL multilevel (SE(2) -> SE(2) x R^N) and decomposed (base roadmap +
-# layered arm scheduler); only for subgroups that include the mobile base.
-BASE_PLANNERS = ("qrrt", "qrrtstar", "qmp", "qmpstar", "decomposed")
-
-
 class PlanningStatus(Enum):
     """Status of a motion planning attempt."""
 
@@ -99,10 +55,52 @@ class PlannerConfig:
             )
             self.planner_name = new
 
-        if self.planner_name not in GEOMETRIC_PLANNERS + BASE_PLANNERS:
+        valid_planners = (
+            # RRT family
+            "rrtc",
+            "rrt",
+            "rrtstar",
+            "informed_rrtstar",
+            "rrtsharp",
+            "rrtxstatic",
+            "strrtstar",
+            "lbtrrt",
+            "trrt",
+            "bitrrt",
+            # Informed trees (asymptotically optimal)
+            "bitstar",
+            "abitstar",
+            "aitstar",
+            "eitstar",
+            "blitstar",
+            # FMT
+            "fmt",
+            "bfmt",
+            # KPIECE
+            "kpiece",
+            "bkpiece",
+            "lbkpiece",
+            # PRM family
+            "prm",
+            "prmstar",
+            "lazyprm",
+            "lazyprmstar",
+            "spars",
+            "spars2",
+            # Exploration-based
+            "est",
+            "biest",
+            "sbl",
+            "stride",
+            "pdst",
+            # Decomposed (base roadmap + layered arm scheduler); only
+            # meaningful for subgroups that include the mobile base.
+            "decomposed",
+        )
+        if self.planner_name not in valid_planners:
             raise ValueError(
-                f"Unknown planner '{self.planner_name}'. Supported: "
-                f"{', '.join(GEOMETRIC_PLANNERS + BASE_PLANNERS)}"
+                f"Unknown planner '{self.planner_name}'. "
+                f"Supported: {', '.join(valid_planners)}"
             )
         if self.time_limit <= 0:
             raise ValueError("time_limit must be > 0")

@@ -140,9 +140,7 @@ result = planner.plan_kinodynamic(q_now, new_goal, start_velocity=qd_now)
 
 `examples/planning/kinodynamic.py` runs the scene and legs of
 `examples/planning/nonholonomic.py` (151k-point cloud). Planning times
-are per call on a desktop CPU, 20 trials each. The QRRT columns were
-measured on 0.3.0, whose multilevel top level checked edges more
-coarsely; they have not been rerun since.
+are per call on a desktop CPU, 20 trials each.
 
 **Whole body** — FLASK vs. the multilevel geometric planner (which
 returns an untimed path):

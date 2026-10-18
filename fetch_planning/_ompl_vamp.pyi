@@ -15,8 +15,7 @@ class PlanResult:
 
     @property
     def solved(self) -> bool:
-        """``True`` if OMPL found an exact solution within the time limit
-        (approximate solutions, which stop short of the goal, are not)."""
+        """``True`` if OMPL returned a solution within the time limit."""
         ...
 
     @property
@@ -183,12 +182,6 @@ class OmplVampPlanner:
             allow_reverse: Select the SE(2) base state space.  ``False``
                 (default) picks ``DubinsStateSpace`` (forward-only); ``True``
                 picks ``ReedsSheppStateSpace`` (reverse permitted).
-
-        Raises:
-            ValueError: If ``frozen_config`` does not have 11 entries, an
-                index is outside ``[0, 11)``, or ``base_dim`` is neither 0
-                nor 3 with the base joints 0, 1, 2 leading
-                ``active_indices``.
         """
         ...
 
@@ -289,9 +282,10 @@ class OmplVampPlanner:
         search of asymptotically-optimal planners (RRT*, BIT*, AIT*,
         QRRT*, …).  Multiple costs are summed with their ``weight``.
 
-        For whole-body / base-including subgroups the cost is combined
-        with the Dubins / Reeds-Shepp path-length term (which lives in
-        the state-space distance) — non-holonomic shaping is preserved.
+        For whole-body / base-including subgroups the cost is set on
+        the multilevel top SpaceInformation and combined with the
+        Dubins / Reeds-Shepp path-length term (which lives in the
+        state-space distance) — non-holonomic shaping is preserved.
 
         Args:
             so_path: Path to the compiled ``.so`` file.
@@ -327,10 +321,7 @@ class OmplVampPlanner:
             start: Active-DOF start configuration (length :meth:`dimension`).
             goal: Active-DOF goal configuration (length :meth:`dimension`).
             planner_name: OMPL planner identifier (e.g. ``"rrtc"``,
-                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).  Subgroups with
-                the base also accept the multilevel planners ``"qrrt"``,
-                ``"qrrtstar"``, ``"qmp"``, ``"qmpstar"`` and
-                ``"decomposed"``.
+                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).
             time_limit: Solver time limit in seconds.
             simplify: If true, run ``SimpleSetup::simplifySolution`` on the
                 returned path.
@@ -509,11 +500,5 @@ class OmplVampPlanner:
                 in ``active_indices``.
             base_dim: How many leading active indices form the
                 nonholonomic base (0 = arm-only, 3 = SE2 base).
-
-        Raises:
-            ValueError: If ``frozen_config`` does not have 11 entries, an
-                index is outside ``[0, 11)``, or ``base_dim`` is neither 0
-                nor 3 with the base joints 0, 1, 2 leading
-                ``active_indices``.
         """
         ...

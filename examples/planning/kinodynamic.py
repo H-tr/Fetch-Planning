@@ -109,7 +109,7 @@ def make_planners(cloud: np.ndarray, time_limit: float, point_radius: float = 0.
     wb = create_planner(
         "fetch_whole_body",
         config=PlannerConfig(
-            planner_name="qrrt", time_limit=time_limit, point_radius=point_radius
+            planner_name="rrtc", time_limit=time_limit, point_radius=point_radius
         ),
         pointcloud=cloud,
     )

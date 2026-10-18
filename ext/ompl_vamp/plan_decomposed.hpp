@@ -253,8 +253,7 @@ inline auto plan_decomposed(bool allow_reverse, double turning_radius,
     auto ptc_time = ob::timedPlannerTerminationCondition(this_budget);
     auto ptc_soln = ob::exactSolnPlannerTerminationCondition(pdef);
     auto ptc = ob::plannerOrTerminationCondition(ptc_time, ptc_soln);
-    // Approximate solutions stop short of the goal.
-    if (base_planner->solve(ptc) != ob::PlannerStatus::EXACT_SOLUTION) continue;
+    if (!base_planner->solve(ptc)) continue;
 
     auto* raw = pdef->getSolutionPath()->as<og::PathGeometric>();
     og::PathGeometric path = *raw;  // copy: interpolate() mutates

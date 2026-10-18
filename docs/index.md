@@ -19,7 +19,7 @@ trajectory generation, all behind a unified Python API.
     ROS, no MoveIt. Vendor it into any project with a single
     `pip install -e .`.
 
--   :material-source-branch:{ .lg .middle } __30 planners + multilevel__
+-   :material-source-branch:{ .lg .middle } __26 planners + multilevel__
 
     ---
 
