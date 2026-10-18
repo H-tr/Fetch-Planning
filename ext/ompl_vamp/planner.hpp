@@ -771,7 +771,9 @@ class OmplVampPlanner {
 
   void build_state_space() {
     Robot::Configuration lo, hi;
-    std::array<float, Robot::dimension> zeros{}, ones{};
+    alignas(Robot::Configuration::S::Alignment)
+        std::array<float, Robot::Configuration::num_scalars_rounded>
+            zeros{}, ones{};
     ones.fill(1.0f);
     lo = Robot::Configuration(zeros.data());
     hi = Robot::Configuration(ones.data());

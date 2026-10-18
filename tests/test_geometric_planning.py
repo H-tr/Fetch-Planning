@@ -1,9 +1,13 @@
 """Geometric planning: what the collision checks and the solver statuses
 guarantee."""
 
+import os
+
 import numpy as np
 import pytest
+from conftest import requires_pinocchio
 
+import fetch_planning
 from fetch_planning._ompl_vamp import OmplVampPlanner
 from fetch_planning.fetch import BASE_TURNING_RADIUS, HOME_JOINTS
 from fetch_planning.planning import create_planner
@@ -169,3 +173,22 @@ def test_subgroup_inputs_are_checked():
     planner = OmplVampPlanner([4, 5], home)
     with pytest.raises(ValueError):
         planner.set_subgroup([4, 5], home + [0.0], 0)
+
+
+@requires_pinocchio
+def test_bounds_are_the_joint_limits():
+    """The bounds come from the compiled robot model: the URDF limits."""
+    import pinocchio as pin
+
+    urdf = os.path.join(
+        os.path.dirname(fetch_planning.__file__),
+        "resources/robot/fetch/fetch_whole_body.urdf",
+    )
+    model = pin.buildModelFromUrdf(urdf)
+    planner = OmplVampPlanner(list(range(3, 11)), HOME_JOINTS.tolist())
+    np.testing.assert_allclose(
+        planner.lower_bounds(), model.lowerPositionLimit[3:], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        planner.upper_bounds(), model.upperPositionLimit[3:], atol=1e-6
+    )
