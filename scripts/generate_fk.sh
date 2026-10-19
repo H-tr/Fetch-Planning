@@ -6,9 +6,7 @@
 #   - FetchWholeBody  (11 DOF)  from fetch_whole_body.urdf + fetch.srdf
 #   - FetchBase       (3  DOF)  from fetch_base.urdf + fetch_base.srdf
 #                               (trimmed URDF — base_link only, no arm)
-#                               Used as a proper-relaxation collision
-#                               model at the lower level of multilevel
-#                               whole-body planning.
+#                               The extension does not use it.
 #
 # With the pinned cricket, regenerating from the committed URDFs, SRDFs
 # and configs reproduces the committed headers (the conda-forge CppAD

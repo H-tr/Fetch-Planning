@@ -49,8 +49,8 @@ publishes them to PyPI via Trusted Publishing:
 
 ```bash
 # after bumping `version` in pyproject.toml on main
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
 ## Development Setup

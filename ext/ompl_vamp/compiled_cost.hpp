@@ -13,7 +13,7 @@
  * (trapezoidal rule, optionally sub-sampled via
  * ``enableMotionCostInterpolation``).  This is the standard soft-cost
  * plug-in point for asymptotically-optimal planners such as RRT*,
- * BIT*, AIT*, and the multilevel QRRT*.
+ * BIT* and AIT*.
  *
  * For whole-body / base-including subgroups the planner combines this
  * user-supplied objective on top of the base SE(2) path-length
@@ -24,7 +24,7 @@
  * ``CostLibrary`` so that the thin ``CompiledCost`` wrapper can be
  * reconstructed on each plan() call against whatever
  * ``SpaceInformation`` the planner happens to be using at that time
- * (flat vs. constrained vs. multilevel top) — the shared library is
+ * (flat vs. constrained vs. base) — the shared library is
  * only loaded once per user-defined cost.
  */
 
@@ -143,8 +143,7 @@ class CostLibrary {
 ///   * ``kPlain``    — RealVectorStateSpace(active_dim) (arm-only).
 ///   * ``kSE2Only``  — SE(2) state (Dubins or RS, base-only subgroups).
 ///   * ``kCompound`` — CompoundStateSpace(SE(2) + RealVector) for
-///                     subgroups that include the base AND arm joints,
-///                     including the multilevel "top" space.
+///                     subgroups that include the base AND arm joints.
 /// The Cost CasADi expression is always written against the planner's
 /// active-DOF vector ``q`` (length ``active_dim``), with base joints in
 /// indices [0, base_dim) when present.

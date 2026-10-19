@@ -4,10 +4,10 @@ Runs the scene, poses and IK solutions of ``nonholonomic.py`` through
 :meth:`MotionPlanner.plan_kinodynamic` and answers three questions with
 numbers from *our* robot and scene rather than from the paper:
 
-* **benchmark** — planning time / success of FLASK versus the existing
-  planners, per whole-body leg (vs. multilevel QRRT) and for arm-only
-  motions (vs. RRT-Connect + TOPP-RA, including how often the timed
-  trajectory actually collides once its corners are rounded).
+* **benchmark** — planning time / success of FLASK per whole-body leg,
+  and for arm-only motions versus RRT-Connect + TOPP-RA (including how
+  often the timed trajectory actually collides once its corners are
+  rounded).
 * **track** — does feed-forward + PID suffice?  Every FLASK leg is
   executed in closed loop on a simulated robot: velocity-controlled
   joints with actuator lag, and a diff-drive base with actuator lag and
@@ -109,11 +109,11 @@ def make_planners(cloud: np.ndarray, time_limit: float, point_radius: float = 0.
     wb = create_planner(
         "fetch_whole_body",
         config=PlannerConfig(
-            planner_name="qrrt", time_limit=time_limit, point_radius=point_radius
+            planner_name="rrtc", time_limit=time_limit, point_radius=point_radius
         ),
         pointcloud=cloud,
     )
-    wb.set_base_bounds(**demo.BASE_BOUNDS)
+    wb.set_joint_limits(demo.BASE_LIMITS)
     arm = create_planner(
         "fetch_arm_with_torso",
         config=PlannerConfig(
@@ -140,12 +140,8 @@ def benchmark(wb, arm, trials: int, time_limit: float) -> None:
     kcfg = KinodynamicConfig(time_limit=time_limit)
 
     print("\n== Whole body (11 DOF, nonholonomic base) ==")
-    print(
-        "  FLASK: time-parameterised, limits enforced.  Multilevel QRRT: geometric path only."
-    )
     for name, s, g in WB_LEGS:
         k_ms, k_ok, k_dur, k_coll = [], 0, [], 0
-        g_ms, g_ok = [], 0
         for _ in range(trials):
             r = wb.plan_kinodynamic(s, g, config=kcfg)
             k_ms.append(r.planning_time_ns / 1e6)
@@ -154,14 +150,10 @@ def benchmark(wb, arm, trials: int, time_limit: float) -> None:
                 k_dur.append(r.trajectory.duration)
                 _, q, _, _ = r.trajectory.sample_uniform(0.005)
                 k_coll += int(not wb.validate_batch(q).all())
-            p = wb.plan(s, g)
-            g_ms.append(p.planning_time_ns / 1e6)
-            g_ok += int(p.success)
         print(
             f"  {name:12s} FLASK {k_ok:3d}/{trials} {summarize(k_ms)} | duration {np.median(k_dur):5.1f} s"
             f" | colliding {k_coll}"
         )
-        print(f"  {'':12s} QRRT  {g_ok:3d}/{trials} {summarize(g_ms)}")
 
     print("\n== Arm only (torso + 7 joints, base parked at the table) ==")
     print(

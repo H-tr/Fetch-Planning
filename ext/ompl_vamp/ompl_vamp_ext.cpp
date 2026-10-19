@@ -183,16 +183,15 @@ NB_MODULE(_ompl_vamp, m) {
            "DubinsStateSpace (forward-only curves, no reverse motion "
            "ever).  When true, uses ReedsSheppStateSpace (shortest-of-48 "
            "curves, reverse allowed when geometrically shorter).\n"
-           "Every OMPL geometric planner runs on the active space; "
-           "subgroups with the base also accept the multilevel planners "
-           "(qrrt, qrrtstar, qmp, qmpstar: SE2 -> SE2 x R^N via OMPL "
-           "fiber bundles) and 'decomposed'.",
+           "Every OMPL geometric planner runs on the active space.",
            nb::arg("active_indices"), nb::arg("frozen_config"),
            nb::arg("base_dim") = 0, nb::arg("turning_radius") = 0.2,
            nb::arg("allow_reverse") = false)
-      .def("set_base_bounds", &OmplVampPlanner::set_base_bounds,
-           nb::arg("x_lo"), nb::arg("x_hi"), nb::arg("y_lo"), nb::arg("y_hi"),
-           nb::arg("theta_lo") = -M_PI, nb::arg("theta_hi") = M_PI)
+      .def_static("default_joint_limits",
+                  &OmplVampPlanner::default_joint_limits)
+      .def("joint_limits", &OmplVampPlanner::joint_limits)
+      .def("set_joint_limits", &OmplVampPlanner::set_joint_limits,
+           nb::arg("lower"), nb::arg("upper"))
       .def("add_pointcloud", &OmplVampPlanner::add_pointcloud,
            nb::arg("points"), nb::arg("r_min"), nb::arg("r_max"),
            nb::arg("point_radius"))
@@ -214,7 +213,7 @@ NB_MODULE(_ompl_vamp, m) {
       .def("plan", &OmplVampPlanner::plan, nb::arg("start"), nb::arg("goal"),
            nb::arg("planner_name") = "rrtc", nb::arg("time_limit") = 10.0,
            nb::arg("simplify") = true, nb::arg("interpolate") = true,
-           nb::arg("interpolate_count") = 0, nb::arg("resolution") = 64.0)
+           nb::arg("resolution") = 64.0)
       .def("plan_kinodynamic", &OmplVampPlanner::plan_kinodynamic,
            nb::arg("start"), nb::arg("start_velocity"), nb::arg("goal"),
            nb::arg("time_limit"), nb::arg("settings"),

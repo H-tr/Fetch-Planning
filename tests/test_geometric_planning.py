@@ -12,7 +12,7 @@ from fetch_planning._ompl_vamp import OmplVampPlanner
 from fetch_planning.fetch import BASE_TURNING_RADIUS, HOME_JOINTS
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
-from fetch_planning.types.planning import BASE_PLANNERS, GEOMETRIC_PLANNERS
+from fetch_planning.types.planning import GEOMETRIC_PLANNERS
 
 
 def grid(lo, hi):
@@ -62,8 +62,9 @@ def test_partial_motions_keep_valid_states(subgroup, planner_name):
             ),
             pointcloud=table_and_shelf(),
         )
-        if planner.has_base:
-            planner.set_base_bounds(-1.0, 2.0, -1.5, 1.5)
+        planner.set_joint_limits(
+            {"base_x_joint": (-1.0, 2.0), "base_y_joint": (-1.5, 1.5)}
+        )
         result = planner.plan(
             planner.extract_config(HOME_JOINTS), planner.sample_valid()
         )
@@ -78,8 +79,7 @@ def test_rrtc_runs_rrt_connect_with_the_base(capfd):
     goal = HOME_JOINTS.copy()
     goal[:3] = [1.0, 1.0, np.pi / 2]
     assert planner.plan(HOME_JOINTS, goal).success
-    out = capfd.readouterr().out
-    assert "RRTConnect" in out and "QRRT" not in out
+    assert "RRTConnect" in capfd.readouterr().out
 
 
 # OMPL's BLIT* throws "Asked to remove vertex from reverse children that is
@@ -105,7 +105,7 @@ def test_every_planner_runs(planner_name):
     planner.plan(start, goal)
 
 
-@pytest.mark.parametrize("planner_name", BASE_PLANNERS + ("kpiece",))
+@pytest.mark.parametrize("planner_name", ["rrtc", "kpiece"])
 def test_planners_run_with_the_base(planner_name):
     planner = create_planner(
         "fetch_base_arm",
@@ -121,11 +121,12 @@ def test_planners_run_with_the_base(planner_name):
     assert planner.validate_batch(result.path).all()
 
 
-def test_multilevel_planners_need_the_base():
-    planner = create_planner("fetch_arm", config=PlannerConfig(planner_name="qrrt"))
-    start = planner.extract_config(HOME_JOINTS)
+@pytest.mark.parametrize(
+    "planner_name", ["qrrt", "qrrtstar", "qmp", "qmpstar", "decomposed"]
+)
+def test_multilevel_planner_names_are_gone(planner_name):
     with pytest.raises(ValueError):
-        planner.plan(start, start)
+        PlannerConfig(planner_name=planner_name)
 
 
 @pytest.mark.parametrize("planner_name", ["rrt", "rrtc"])
@@ -138,7 +139,7 @@ def test_approximate_solutions_are_not_solved(planner_name):
     planner = OmplVampPlanner([4], frozen.tolist(), 0, BASE_TURNING_RADIUS, False)
     planner.add_sphere([0.8, 0.0, 1.1], 0.1)
     assert planner.validate([-1.2]) and planner.validate([1.2])
-    result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0, 0.0)
+    result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0.0)
     assert not result.solved
 
 
@@ -148,7 +149,7 @@ def head_height_beam():
     return np.stack([np.ones(y.size), y.ravel(), z.ravel()], 1).astype(np.float32)
 
 
-@pytest.mark.parametrize("planner_name", ["qrrt", "rrtc"])
+@pytest.mark.parametrize("planner_name", ["rrtc", "kpiece"])
 def test_base_subgroup_checks_the_whole_body(planner_name):
     """The base fits under the beam, the frozen torso and head do not:
     there is no path."""
@@ -157,7 +158,7 @@ def test_base_subgroup_checks_the_whole_body(planner_name):
         config=PlannerConfig(planner_name=planner_name, time_limit=0.5),
         pointcloud=head_height_beam(),
     )
-    planner.set_base_bounds(-1.0, 4.0, -2.0, 2.0)
+    planner.set_joint_limits({"base_x_joint": (-1.0, 4.0), "base_y_joint": (-2.0, 2.0)})
     assert not planner.validate(np.array([1.0, 0.0, 0.0]))
     assert not planner.plan(np.zeros(3), np.array([2.0, 0.0, 0.0])).success
 

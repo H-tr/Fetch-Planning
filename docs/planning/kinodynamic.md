@@ -140,23 +140,20 @@ result = planner.plan_kinodynamic(q_now, new_goal, start_velocity=qd_now)
 
 `examples/planning/kinodynamic.py` runs the scene and legs of
 `examples/planning/nonholonomic.py` (151k-point cloud). Planning times
-are per call on a desktop CPU, 20 trials each. The QRRT columns were
-measured on 0.3.0, whose multilevel top level checked edges more
-coarsely; they have not been rerun since.
+are per call on a desktop CPU, 20 trials each.
 
-**Whole body** — FLASK vs. the multilevel geometric planner (which
-returns an untimed path):
+**Whole body**:
 
-| Leg | FLASK success | FLASK median / p95 | Duration | QRRT success | QRRT median |
-|---|---|---|---|---|---|
-| start → table | 20/20 | 48 / 238 ms | 12.2 s | 18/20 | 4.1 ms |
-| carry 1 | 20/20 | 63 / 367 ms | 14.3 s | 18/20 | 3.9 ms |
-| far → mid | 20/20 | 0.4 / 0.4 ms | 9.1 s | 20/20 | 2.0 ms |
-| mid → sofa | 20/20 | 0.2 / 0.2 ms | 5.9 s | 20/20 | 1.1 ms |
-| sofa → tea | 20/20 | 0.2 / 0.2 ms | 6.5 s | 20/20 | 0.6 ms |
-| tea → table | 20/20 | 13 / 270 ms | 10.0 s | 20/20 | 1.4 ms |
-| carry 2 | 20/20 | 45 / 186 ms | 13.3 s | 19/20 | 3.9 ms |
-| table → home | 20/20 | 31 / 90 ms | 12.4 s | 20/20 | 7.4 ms |
+| Leg | FLASK success | FLASK median / p95 | Duration |
+|---|---|---|---|
+| start → table | 20/20 | 48 / 238 ms | 12.2 s |
+| carry 1 | 20/20 | 63 / 367 ms | 14.3 s |
+| far → mid | 20/20 | 0.4 / 0.4 ms | 9.1 s |
+| mid → sofa | 20/20 | 0.2 / 0.2 ms | 5.9 s |
+| sofa → tea | 20/20 | 0.2 / 0.2 ms | 6.5 s |
+| tea → table | 20/20 | 13 / 270 ms | 10.0 s |
+| carry 2 | 20/20 | 45 / 186 ms | 13.3 s |
+| table → home | 20/20 | 31 / 90 ms | 12.4 s |
 
 **Arm only** (base parked at the table) — FLASK vs. RRT-Connect +
 TOPP-RA (planning plus parameterization time), and how often the
@@ -173,9 +170,7 @@ Takeaways:
 * Open-floor legs plan in under a millisecond (the direct
   rotate-translate-rotate connection). Legs that manoeuvre the arm next
   to the table take tens of milliseconds, p95 90–370 ms including up to
-  50 ms of simplification — slower than the geometric planner's median,
-  but with no failures, whereas the geometric planner times out on up
-  to 10 % of trials on those legs at a 1 s budget.
+  50 ms of simplification.
 * Simplification (greedy shortcuts + subdivide-and-cut-corners, after
   VAMP) shortens the table legs by 30–45 %; FLASK trajectories are
   within 5 % of RRT-Connect + TOPP-RA's duration on the long arm

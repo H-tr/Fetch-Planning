@@ -4,7 +4,7 @@ Demonstrates **true whole-body planning** (11 DOF) where base and arm
 move **simultaneously** in a single OMPL call:
 
 * **Base (3 DOF)**: Reeds-Shepp curves enforce non-holonomic
-  differential-drive constraints.  Reverse penalty discourages backing up.
+  differential-drive constraints.
 * **Arm (8 DOF)**: ``RealVectorStateSpace`` with linear interpolation.
 * **Both planned together**: the start and goal differ in *both* base
   pose and arm configuration, so OMPL explores the full 11-DOF space
@@ -183,13 +183,9 @@ PLACE2_GRASP = np.array(
 
 # ── Planning parameters ──────────────────────────────────────────────
 
-# NAV_TIME is the per-call time budget for the whole-body multilevel
-# planner.  The solver returns as soon as the top level has an exact
-# solution (see ``plan_multilevel`` in ext/ompl_vamp/planner.hpp), so
-# this is an *upper bound*, not a fixed spend — typical legs complete
-# in single-digit ms.  The ceiling exists for the flaky carry-with-
-# extended-arm legs where the fiber-bundle lift occasionally needs
-# more samples.
+# NAV_TIME is the per-call time budget for the whole-body planner.
+# RRT-Connect returns as soon as it has a solution, so this is an
+# *upper bound*, not a fixed spend.
 # Override with --nav_time=… on the command line.
 NAV_TIME = 0.5
 ARM_TIME = 1.0
@@ -199,7 +195,7 @@ ARM_TIME = 1.0
 TUCK_TORSO = 0.10
 TUCK_ARM = HOME_JOINTS[3:].copy()
 TUCK_ARM[0] = TUCK_TORSO
-BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
+BASE_LIMITS = {"base_x_joint": (-4.0, 4.0), "base_y_joint": (-2.0, 4.0)}
 
 
 # ── Scene helpers ─────────────────────────────────────────────────────
@@ -423,12 +419,12 @@ def play_segments(env, segments, gripper_link_idx, fps=60.0):
 def main(
     pcd_stride: int = 1,
     visualize: bool = True,
-    nav_planner: str = "qrrt",
+    nav_planner: str = "rrtc",
     nav_time: float = NAV_TIME,
 ) -> None:
     print("=" * 65)
-    print("  Whole-Body Multilevel Motion Planning Demo")
-    print("  11 DOF: SE(2) -> Compound(SE(2) + R^8)  (OMPL fiber bundles)")
+    print("  Whole-Body Motion Planning Demo")
+    print("  11 DOF: Compound(SE(2) + R^8)")
     print(f"  Planner: {nav_planner}  |  Budget: {nav_time * 1000:.0f} ms")
     print("=" * 65)
 
@@ -461,7 +457,7 @@ def main(
         config=PlannerConfig(planner_name=nav_planner, time_limit=nav_time),
         pointcloud=cloud,
     )
-    planner.set_base_bounds(**BASE_BOUNDS)
+    planner.set_joint_limits(BASE_LIMITS)
     t_build = _time.perf_counter() - t_build
     print(f"  planner built in {t_build*1000:.0f} ms (reused for all calls)")
 

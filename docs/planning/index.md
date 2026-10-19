@@ -7,7 +7,7 @@
     ---
 
     All of [OMPL](https://ompl.kavrakilab.org/)'s mature sampling-based
-    planners (30 geometric, 4 multilevel), driven by one uniform Python call. No glue
+    planners (30 geometric), driven by one uniform Python call. No glue
     code to swap planners — change a string.
 
 -   __VAMP backend__
@@ -83,7 +83,6 @@ accepts any of:
     | PRM | `prm`, `lazyprm`, `spars`, `spars2` |
     | Exploration | `est`, `biest`, `sbl`, `stride`, `pdst` |
     | RRT\*-feasible | `rrtsharp`, `rrtxstatic` |
-    | Multilevel | `qrrt`, `qmp` |
 
 === "Asymptotically optimal (keep refining until budget)"
 
@@ -93,13 +92,8 @@ accepts any of:
     | Informed trees | `bitstar`, `abitstar`, `aitstar`, `eitstar`, `blitstar` |
     | FMT | `fmt`, `bfmt` |
     | PRM\* | `prmstar`, `lazyprmstar` |
-    | Multilevel | `qrrtstar`, `qmpstar` |
 
-Every geometric planner runs on the subgroup's own state space.  The
-multilevel planners (OMPL fiber bundles) and `decomposed` (a base
-roadmap plus a layered arm schedule) need the base in the subgroup;
-the multilevel planners plan the base first in SE(2) against the base
-links, then lift the path into the whole body.  The informed planners
+Every planner runs on the subgroup's own state space.  The informed planners
 (`informed_rrtstar`, `bitstar`, `abitstar`, `aitstar`, `eitstar`,
 `blitstar`) need a single state space, so OMPL rejects them for the
 base + arm subgroups.
@@ -164,14 +158,12 @@ PlannerConfig(
     # constraints and costs.
     simplify=True,
 
-    # Resample the (simplified) path densely.  Pick one knob:
+    # Resample the (simplified) path densely:
     #
-    #   interpolate_count > 0   → exactly this many total waypoints,
-    #                             distributed proportionally to edge length
     #   resolution > 0.0        → ceil(edge_length * resolution) samples
-    #                             per edge — cleanest "uniform density"
-    #                             option, scales naturally with DOF
-    #   both 0                  → OMPL's default longest-valid-segment
+    #                             per edge — uniform density, scales
+    #                             naturally with DOF
+    #   resolution = 0.0        → OMPL's default longest-valid-segment
     #                             fraction, usually too sparse for control
     #
     # The default (resolution=64.0) gives ~64 waypoints per unit of
@@ -179,7 +171,12 @@ PlannerConfig(
     # loop and robust to low-frequency replanning.
     interpolate=True,
     resolution=64.0,
-    interpolate_count=0,
+
+    # Joint ranges the planner samples in, by joint name, (lower, upper)
+    # in metres for base_x_joint / base_y_joint / torso and radians
+    # otherwise.  Joints left out keep the robot model's range (the base
+    # spans ±10 m).  Same as calling planner.set_joint_limits(...).
+    joint_limits={"base_x_joint": (-4.0, 4.0), "base_y_joint": (-2.0, 4.0)},
 )
 ```
 
@@ -221,13 +218,9 @@ Typical recipes:
 === "Fixed waypoint count (e.g. 100 steps)"
 
     ```python
-    PlannerConfig(
-        planner_name="rrtc",
-        time_limit=1.0,
-        interpolate=True,
-        interpolate_count=100,        # exactly 100 waypoints — mutually exclusive with resolution
-        resolution=0.0,
-    )
+    planner = create_planner("fetch_arm", config=PlannerConfig(interpolate=False))
+    result = planner.plan(start, goal)
+    path = planner.interpolate_path(result.path, count=100)   # exactly 100 waypoints
     ```
 
 ## Post-hoc simplify / interpolate

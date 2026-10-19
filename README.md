@@ -141,7 +141,7 @@ alongside the OMPL bridge, not in a fork.
       base transform before the arm FK. Mirrors the pattern used by
       `autolife_body_coupled.hh`.
 - [x] `ext/ompl_vamp/include/vamp/robots/fetch_base.hh` — 3-DOF base-only
-      spherized model for the base level of the multilevel planners.
+      spherized model (generated; the extension does not use it).
 - [x] `third_party/vamp` pinned to upstream `H-tr/vamp@main` (no fork).
 
 ### Phase 3 — OMPL frontend adaptations  ✅
@@ -180,9 +180,9 @@ alongside the OMPL bridge, not in a fork.
       table pointcloud
 - [x] `examples/planning/nonholonomic.py` — `fetch_whole_body`
       nonholonomic base + arm motion around obstacles
-- [x] `examples/planning/{subgroup,multilevel_single_step,time_parameterization}.py`,
+- [x] `examples/planning/{subgroup,time_parameterization}.py`,
       `examples/planning/constrained/`, `examples/planning/cost/`,
-      `examples/ik/constrained*.py` — constrained / cost / multilevel
+      `examples/ik/constrained*.py` — constrained / cost
       parity with Autolife-Planning
 - [x] `pixi run build` succeeds end-to-end; examples run
 

@@ -19,14 +19,13 @@ trajectory generation, all behind a unified Python API.
     ROS, no MoveIt. Vendor it into any project with a single
     `pip install -e .`.
 
--   :material-source-branch:{ .lg .middle } __30 planners + multilevel__
+-   :material-source-branch:{ .lg .middle } __30 planners__
 
     ---
 
     Full OMPL planner library, not a bespoke subset: RRT-Connect,
-    RRT\*, BIT\*, AIT\*, EIT\*, KPIECE, PRM, FMT, SPARS, … plus OMPL
-    multilevel planning (QRRT / QRRT\* / QMP / QMP\*) for the
-    nonholonomic base hierarchy `SE(2) → SE(2) × R^N`.
+    RRT\*, BIT\*, AIT\*, EIT\*, KPIECE, PRM, FMT, SPARS, … on every
+    subgroup, the nonholonomic base included (`SE(2) × R^N`).
 
 -   :material-speedometer:{ .lg .middle } __Microsecond checks, millisecond plans__
 
