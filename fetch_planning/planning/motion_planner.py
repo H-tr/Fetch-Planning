@@ -15,13 +15,10 @@ the SE(2) space is ``DubinsStateSpace`` (forward-only) or
 ``ReedsSheppStateSpace`` (reverse allowed), selected by
 ``BASE_REVERSE_ENABLE``.  Tree extension, rewire and the motion
 checks use the selected car-like curves between samples, and the
-path-cost objective keeps the nonholonomic distance.  Besides every
-OMPL geometric planner, these subgroups accept the OMPL multilevel
-planners (``qrrt``, ``qrrtstar``, ``qmp``, ``qmpstar``; fiber bundles
-with the hierarchy ``SE2 → SE2 × R^N``) and ``decomposed``.
+path-cost objective keeps the nonholonomic distance.
 
-Arm-only subgroups use standard OMPL geometric planning and
-optionally support CasADi-compiled manifold constraints
+Every subgroup runs the named OMPL geometric planner.  Arm-only
+subgroups optionally support CasADi-compiled manifold constraints
 (``ProjectedStateSpace``).
 
 :meth:`MotionPlanner.plan_kinodynamic` is the kinodynamic alternative:
@@ -218,9 +215,8 @@ class MotionPlanner:
     def has_base(self) -> bool:
         """True if any of the mobile base joints (x, y, theta) are active.
 
-        When True, the base moves along Dubins / Reeds-Shepp curves and
-        the OMPL multilevel planners (hierarchy SE2 → SE2×R^N) are
-        available.
+        When True, the base moves along Dubins / Reeds-Shepp curves in
+        the state space ``SE2 × R^N``.
         """
         return self._has_base
 
@@ -287,9 +283,9 @@ class MotionPlanner:
         """Push compiled CasADi costs to the C++ planner.
 
         Costs are soft per-state terms that shape the solution returned
-        by asymptotically-optimal planners (``rrtstar``, ``bitstar``,
-        ``qrrtstar``, …).  For subgroups with the base the objective
-        keeps the SE(2) path-length term (Dubins or Reeds-Shepp, per
+        by asymptotically-optimal planners (``rrtstar``, ``bitstar``, …).
+        For subgroups with the base the objective keeps the SE(2)
+        path-length term (Dubins or Reeds-Shepp, per
         ``BASE_REVERSE_ENABLE``) alongside the user cost, so the
         non-holonomic shaping is preserved.
         """
@@ -868,8 +864,8 @@ def create_planner(
             (CasADi-backed).  Soft per-state terms summed with their
             weights and trapezoidally integrated along every motion —
             the asymptotically-optimal planners (``rrtstar``,
-            ``bitstar``, ``aitstar``, ``qrrtstar``, …) minimise this
-            objective.  For subgroups with the base the objective keeps
+            ``bitstar``, ``aitstar``, …) minimise this objective.  For
+            subgroups with the base the objective keeps
             the Dubins / Reeds-Shepp path length — user costs add on top,
             preserving the non-holonomic shaping.
             Without any costs the planner uses OMPL's default path-length

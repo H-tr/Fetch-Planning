@@ -49,9 +49,6 @@ GEOMETRIC_PLANNERS = (
     "stride",
     "pdst",
 )
-# OMPL multilevel (SE(2) -> SE(2) x R^N) and decomposed (base roadmap +
-# layered arm scheduler); only for subgroups that include the mobile base.
-BASE_PLANNERS = ("qrrt", "qrrtstar", "qmp", "qmpstar", "decomposed")
 
 
 class PlanningStatus(Enum):
@@ -99,10 +96,10 @@ class PlannerConfig:
             )
             self.planner_name = new
 
-        if self.planner_name not in GEOMETRIC_PLANNERS + BASE_PLANNERS:
+        if self.planner_name not in GEOMETRIC_PLANNERS:
             raise ValueError(
                 f"Unknown planner '{self.planner_name}'. Supported: "
-                f"{', '.join(GEOMETRIC_PLANNERS + BASE_PLANNERS)}"
+                f"{', '.join(GEOMETRIC_PLANNERS)}"
             )
         if self.time_limit <= 0:
             raise ValueError("time_limit must be > 0")

@@ -12,7 +12,7 @@ from fetch_planning._ompl_vamp import OmplVampPlanner
 from fetch_planning.fetch import BASE_TURNING_RADIUS, HOME_JOINTS
 from fetch_planning.planning import create_planner
 from fetch_planning.types import PlannerConfig
-from fetch_planning.types.planning import BASE_PLANNERS, GEOMETRIC_PLANNERS
+from fetch_planning.types.planning import GEOMETRIC_PLANNERS
 
 
 def grid(lo, hi):
@@ -78,8 +78,7 @@ def test_rrtc_runs_rrt_connect_with_the_base(capfd):
     goal = HOME_JOINTS.copy()
     goal[:3] = [1.0, 1.0, np.pi / 2]
     assert planner.plan(HOME_JOINTS, goal).success
-    out = capfd.readouterr().out
-    assert "RRTConnect" in out and "QRRT" not in out
+    assert "RRTConnect" in capfd.readouterr().out
 
 
 # OMPL's BLIT* throws "Asked to remove vertex from reverse children that is
@@ -105,7 +104,7 @@ def test_every_planner_runs(planner_name):
     planner.plan(start, goal)
 
 
-@pytest.mark.parametrize("planner_name", BASE_PLANNERS + ("kpiece",))
+@pytest.mark.parametrize("planner_name", ["rrtc", "kpiece"])
 def test_planners_run_with_the_base(planner_name):
     planner = create_planner(
         "fetch_base_arm",
@@ -121,11 +120,12 @@ def test_planners_run_with_the_base(planner_name):
     assert planner.validate_batch(result.path).all()
 
 
-def test_multilevel_planners_need_the_base():
-    planner = create_planner("fetch_arm", config=PlannerConfig(planner_name="qrrt"))
-    start = planner.extract_config(HOME_JOINTS)
+@pytest.mark.parametrize(
+    "planner_name", ["qrrt", "qrrtstar", "qmp", "qmpstar", "decomposed"]
+)
+def test_multilevel_planner_names_are_gone(planner_name):
     with pytest.raises(ValueError):
-        planner.plan(start, start)
+        PlannerConfig(planner_name=planner_name)
 
 
 @pytest.mark.parametrize("planner_name", ["rrt", "rrtc"])
@@ -148,7 +148,7 @@ def head_height_beam():
     return np.stack([np.ones(y.size), y.ravel(), z.ravel()], 1).astype(np.float32)
 
 
-@pytest.mark.parametrize("planner_name", ["qrrt", "rrtc"])
+@pytest.mark.parametrize("planner_name", ["rrtc", "kpiece"])
 def test_base_subgroup_checks_the_whole_body(planner_name):
     """The base fits under the beam, the frozen torso and head do not:
     there is no path."""

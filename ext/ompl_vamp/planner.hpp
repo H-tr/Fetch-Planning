@@ -15,11 +15,8 @@
  * RealVectorStateSpace, optionally projected onto a constraint manifold
  * via CasADi-compiled constraints.
  *
- * Every OMPL geometric planner runs on that space through SimpleSetup.
- * Subgroups with the base can also use OMPL's **multilevel planners**
- * (``qrrt``, ``qrrtstar``, ``qmp``, ``qmpstar``; fiber bundles) with the
- * hierarchy SE(2) → Compound(SE(2) + R^N), whose lower level checks only
- * the base links, and the ``decomposed`` planner (plan_decomposed.hpp).
+ * Every subgroup runs the named OMPL geometric planner on that space
+ * through SimpleSetup.
  */
 
 #pragma once
@@ -39,18 +36,11 @@
 #include <ompl/base/spaces/constraint/ProjectedStateSpace.h>
 #include <ompl/geometric/PathSimplifier.h>
 #include <ompl/geometric/SimpleSetup.h>
-// OMPL — multilevel (fiber bundle) planners
-#include <ompl/multilevel/datastructures/projections/XRN_X_SE2.h>
-#include <ompl/multilevel/planners/qmp/QMP.h>
-#include <ompl/multilevel/planners/qmp/QMPStar.h>
-#include <ompl/multilevel/planners/qrrt/QRRT.h>
-#include <ompl/multilevel/planners/qrrt/QRRTStar.h>
 
 #include <cmath>
 
 #include "compiled_constraint.hpp"
 #include "compiled_cost.hpp"
-#include "plan_decomposed.hpp"
 #include "plan_kinodynamic.hpp"
 #include "validity.hpp"
 // OMPL — informed trees
@@ -108,7 +98,6 @@
 namespace fetch_planning {
 
 namespace og = ompl::geometric;
-namespace om = ompl::multilevel;
 
 /// Build the SE(2) base state space of subgroups with the base.
 ///
@@ -121,8 +110,8 @@ namespace om = ompl::multilevel;
 ///   when it is geometrically shorter.
 ///
 /// Both spaces store states in ``SE2StateSpace::StateType`` layout, so
-/// downstream validators and the manual projection below can treat the
-/// return value polymorphically via ``SE2StateSpace`` casts.
+/// downstream validators can treat the return value polymorphically via
+/// ``SE2StateSpace`` casts.
 inline auto make_se2_base_space(double turning_radius, bool allow_reverse)
     -> std::shared_ptr<ob::SE2StateSpace> {
   if (allow_reverse) {
@@ -131,16 +120,6 @@ inline auto make_se2_base_space(double turning_radius, bool allow_reverse)
   return std::make_shared<ob::DubinsStateSpace>(turning_radius,
                                                 /*isSymmetric=*/false);
 }
-
-// Projection for the multilevel hierarchy Compound(SE2 + R^N) → SE2.
-//
-// OMPL's ProjectionFactory only auto-detects plain SE2 — the RS/Dubins
-// spaces carry STATE_SPACE_REEDS_SHEPP / STATE_SPACE_DUBINS tags so the
-// factory refuses to build the projection.  Both subclasses inherit from
-// SE2StateSpace with the same state layout, so OMPL's own
-// Projection_SE2RN_SE2 works correctly when constructed manually — its
-// project/lift only use ``SE2StateSpace::StateType`` casts, never the
-// type tag.
 
 struct PlanResult {
   bool solved;
@@ -246,13 +225,12 @@ class OmplVampPlanner {
   // OMPL's StateCostIntegralObjective.  They do not constrain the
   // feasible set — collision checking still does that — but they
   // shape the solution returned by asymptotically-optimal planners
-  // (RRT*, BIT*, AIT*, QRRT* …).  Without a user-supplied cost the
-  // planner falls back to OMPL's default path-length objective.
+  // (RRT*, BIT*, AIT* …).  Without a user-supplied cost the planner
+  // falls back to OMPL's default path-length objective.
   //
   // For subgroups with the base the costs are added on top of the
   // path-length term, so the non-holonomic distance metric still
-  // contributes to motionCost; multilevel plans set the objective on the
-  // top level's ProblemDefinition.
+  // contributes to motionCost.
   //
   // Multiple costs are summed via MultiOptimizationObjective with
   // the weights supplied at add time.
@@ -285,28 +263,11 @@ class OmplVampPlanner {
             const std::string& planner_name, double time_limit, bool simplify,
             bool interpolate, int interpolate_count = 0,
             double resolution = 64.0) -> PlanResult {
-    const bool multilevel = planner_name == "qrrt" ||
-                            planner_name == "qrrtstar" ||
-                            planner_name == "qmp" || planner_name == "qmpstar";
-    if (has_base_) {
-      if (!constraints_.empty()) {
-        throw std::invalid_argument(
-            "Constrained planning is not supported for subgroups that "
-            "include mobile-base joints.  Use an arm-only subgroup for "
-            "constrained planning.");
-      }
-      if (planner_name == "decomposed") {
-        return plan_decomposed_wrapper(start, goal, time_limit, simplify,
-                                       interpolate, interpolate_count,
-                                       resolution);
-      }
-      if (multilevel) {
-        return plan_multilevel(start, goal, planner_name, time_limit, simplify,
-                               interpolate, interpolate_count, resolution);
-      }
-    } else if (multilevel) {
-      throw std::invalid_argument("plan: multilevel planner '" + planner_name +
-                                  "' needs the base in the subgroup.");
+    if (has_base_ && !constraints_.empty()) {
+      throw std::invalid_argument(
+          "Constrained planning is not supported for subgroups that "
+          "include mobile-base joints.  Use an arm-only subgroup for "
+          "constrained planning.");
     }
     return plan_geometric(start, goal, planner_name, time_limit, simplify,
                           interpolate, interpolate_count, resolution);
@@ -904,188 +865,6 @@ class OmplVampPlanner {
     return out;
   }
 
-  // ── Multilevel planning (base-included subgroups) ──────────────────
-
-  auto plan_multilevel(const std::vector<double>& start,
-                       const std::vector<double>& goal,
-                       const std::string& planner_name, double time_limit,
-                       bool simplify, bool interpolate,
-                       int interpolate_count = 0, double resolution = 64.0)
-      -> PlanResult {
-    // With arm joints active, a 2-level hierarchy:
-    //   Level 0: SE(2) (base pose, non-holonomic — Dubins or Reeds-Shepp)
-    //   Level 1: Compound(SE(2) + R^N) (full active space)
-    // A base-only subgroup is the single SE(2) level.  The top level checks
-    // the whole body, with the frozen joints, along the space's curves.
-    // OMPL's ProjectionFactory cannot auto-detect the SE2 x R^N -> SE2
-    // mapping because the base subclass carries STATE_SPACE_DUBINS /
-    // STATE_SPACE_REEDS_SHEPP rather than STATE_SPACE_SE2; OMPL's own
-    // Projection_SE2RN_SE2 works when constructed manually, since both
-    // spaces inherit SE2StateSpace's state layout.
-    std::vector<ob::SpaceInformationPtr> si_vec;
-    std::vector<om::ProjectionPtr> proj_vec;
-
-    if (!base_only_) {
-      auto level0_se2 = make_se2_base_space(turning_radius_, allow_reverse_);
-      ob::RealVectorBounds bnd(2);
-      bnd.setLow(0, base_x_lo_);
-      bnd.setHigh(0, base_x_hi_);
-      bnd.setLow(1, base_y_lo_);
-      bnd.setHigh(1, base_y_hi_);
-      level0_se2->setBounds(bnd);
-      level0_se2->setLongestValidSegmentFraction(0.02);
-
-      auto si = std::make_shared<ob::SpaceInformation>(level0_se2);
-      // Base-only check — a proper relaxation of the full-body check,
-      // using the dedicated FetchBase VAMP model (3 DOF, 14 spheres).
-      // Any pose valid at the top level projects to a base-
-      // collision-free pose here, giving the multilevel framework an
-      // admissible abstraction.
-      si->setStateValidityChecker(
-          std::make_shared<BaseOnlyValidityChecker>(si, env_));
-      si->setup();
-      si_vec.push_back(si);
-
-      auto proj =
-          std::make_shared<om::Projection_SE2RN_SE2>(space_, level0_se2);
-      // Eagerly initialise the fiber space (sampler + scratch state),
-      // which the framework relies on for lifting.
-      proj->makeFiberSpace();
-      proj_vec.push_back(proj);
-    }
-    si_vec.push_back(make_space_information_(false).first);
-
-    // Create multilevel planner and problem definition ─────────────────
-    auto& top_si = si_vec.back();
-    auto planner = create_multilevel_planner(si_vec, proj_vec, planner_name);
-
-    auto pdef = std::make_shared<ob::ProblemDefinition>(top_si);
-    ob::ScopedState<> ompl_start(top_si->getStateSpace());
-    ob::ScopedState<> ompl_goal(top_si->getStateSpace());
-    write_scoped_state(ompl_start, start);
-    write_scoped_state(ompl_goal, goal);
-    pdef->setStartAndGoalStates(ompl_start, ompl_goal);
-
-    // Soft costs are integrated by QRRTStar / QMPStar on top of the base
-    // SE(2) distance.  No reverse penalty lives in the distance metric —
-    // forward-only behavior comes from the curve selection (Dubins)
-    // rather than from a cost weighting.
-    if (!cost_libs_.empty()) {
-      pdef->setOptimizationObjective(build_objective(top_si));
-    }
-
-    planner->setProblemDefinition(pdef);
-    planner->setup();
-
-    // Solve ────────────────────────────────────────────────────────────
-    // The multilevel framework only early-exits on non-final levels
-    // (BundleSpaceSequenceImpl.h: `foundKLevelSolution_ && k < size - 1`),
-    // so the top level runs to the full time budget even after an exact
-    // solution exists.  For feasibility planners like QRRT that don't
-    // refine, that's pure waste.  Combine the time budget with an
-    // exact-solution PTC so we return as soon as the top level has a
-    // solution.
-    auto ptc_time = ob::timedPlannerTerminationCondition(time_limit);
-    auto ptc_soln = ob::exactSolnPlannerTerminationCondition(pdef);
-    auto ptc = ob::plannerOrTerminationCondition(ptc_time, ptc_soln);
-    auto t0 = std::chrono::steady_clock::now();
-    auto status = planner->solve(ptc);
-    auto t1 = std::chrono::steady_clock::now();
-    auto elapsed_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-
-    PlanResult result;
-    result.planning_time_ns = elapsed_ns;
-    // OMPL also reports approximate solutions, which stop short of the goal.
-    result.solved = status == ob::PlannerStatus::EXACT_SOLUTION;
-
-    if (result.solved) {
-      auto& path = *pdef->getSolutionPath()->as<og::PathGeometric>();
-
-      if (simplify) {
-        og::PathSimplifier simplifier(top_si);
-        simplifier.simplifyMax(path);
-      }
-      if (interpolate) {
-        if (interpolate_count > 0) {
-          path.interpolate(static_cast<unsigned int>(interpolate_count));
-        } else if (resolution > 0.0) {
-          densify_by_resolution(path, top_si->getStateSpace(), resolution);
-        } else {
-          path.interpolate();
-        }
-      }
-      result.path_cost = path.length();
-
-      for (std::size_t i = 0; i < path.getStateCount(); ++i) {
-        result.path.push_back(read_state(path.getState(i)));
-      }
-    } else {
-      result.path_cost = std::numeric_limits<double>::infinity();
-    }
-    return result;
-  }
-
-  // ── Decomposed planning (base roadmap + layered arm scheduler) ────
-  //
-  // Adapter around ``plan_decomposed`` (plan_decomposed.hpp).  The raw
-  // output is one active-config per base layer (``M`` ≈ 48 waypoints):
-  // the base subspace jumps along RS-curve chord points and the arm
-  // subspace jumps from one Dijkstra-chosen layer config to the next.
-  // For direct playback that's too coarse — the arm appears to teleport
-  // between layers.  When ``interpolate`` is set we rebuild the path as
-  // a compound-space ``PathGeometric`` and densify it so base samples
-  // stay on the RS curve and arm samples linearly interpolate between
-  // adjacent layers, matching the output granularity of
-  // ``plan_multilevel`` / ``plan_geometric``.
-
-  auto plan_decomposed_wrapper(const std::vector<double>& start,
-                               const std::vector<double>& goal,
-                               double time_limit, bool /*simplify*/,
-                               bool interpolate, int interpolate_count = 0,
-                               double resolution = 64.0) -> PlanResult {
-    std::array<double, 4> base_xy_bounds{base_x_lo_, base_x_hi_, base_y_lo_,
-                                         base_y_hi_};
-    DecomposedConfig cfg{};
-    auto r = plan_decomposed(allow_reverse_, turning_radius_, base_xy_bounds,
-                             start, goal, active_indices_, frozen_config_,
-                             base_dim_, active_dim_, env_, time_limit, cfg);
-
-    PlanResult out;
-    out.solved = r.solved;
-    out.planning_time_ns = r.planning_time_ns;
-    if (!r.solved) {
-      out.path_cost = std::numeric_limits<double>::infinity();
-      return out;
-    }
-    out.path_cost = r.path_cost;
-
-    if (!interpolate || r.path.size() < 2) {
-      out.path = std::move(r.path);
-      return out;
-    }
-
-    auto si_compound = std::make_shared<ob::SpaceInformation>(space_);
-    og::PathGeometric path(si_compound);
-    for (const auto& cfg_i : r.path) {
-      ob::ScopedState<> s(space_);
-      write_scoped_state(s, cfg_i);
-      path.append(s.get());
-    }
-    if (interpolate_count > 0) {
-      path.interpolate(static_cast<unsigned int>(interpolate_count));
-    } else if (resolution > 0.0) {
-      densify_by_resolution(path, space_, resolution);
-    } else {
-      path.interpolate();
-    }
-    out.path.reserve(path.getStateCount());
-    for (std::size_t i = 0; i < path.getStateCount(); ++i) {
-      out.path.push_back(read_state(path.getState(i)));
-    }
-    return out;
-  }
-
   // ── Geometric planning (every subgroup; constraints arm-only) ─────
 
   auto plan_geometric(const std::vector<double>& start,
@@ -1202,7 +981,7 @@ class OmplVampPlanner {
   //
   // For base-including subgroups we ALWAYS keep a path-length term as
   // the baseline so the SE(2) distance contribution (Dubins / RS) stays
-  // inside the optimisation objective QRRTStar / RRT* rewires against.
+  // inside the optimisation objective RRT* rewires against.
   // Without this, a CompiledCost would silently shadow the car-like
   // distance in motionCost and the non-holonomic shaping would only
   // affect nearest-neighbour selection, not rewiring decisions.
@@ -1242,23 +1021,6 @@ class OmplVampPlanner {
   }
 
   // ── Planner factories ─────────────────────────────────────────────
-
-  static auto create_multilevel_planner(
-      std::vector<ob::SpaceInformationPtr>& si_vec,
-      std::vector<om::ProjectionPtr>& proj_vec, const std::string& name)
-      -> ob::PlannerPtr {
-    if (proj_vec.empty()) {  // the base alone: a single level
-      if (name == "qrrt") return std::make_shared<om::QRRT>(si_vec);
-      if (name == "qrrtstar") return std::make_shared<om::QRRTStar>(si_vec);
-      if (name == "qmp") return std::make_shared<om::QMP>(si_vec);
-      return std::make_shared<om::QMPStar>(si_vec);
-    }
-    if (name == "qrrt") return std::make_shared<om::QRRT>(si_vec, proj_vec);
-    if (name == "qrrtstar")
-      return std::make_shared<om::QRRTStar>(si_vec, proj_vec);
-    if (name == "qmp") return std::make_shared<om::QMP>(si_vec, proj_vec);
-    return std::make_shared<om::QMPStar>(si_vec, proj_vec);
-  }
 
   static auto create_geometric_planner(const ob::SpaceInformationPtr& si,
                                        const std::string& name)

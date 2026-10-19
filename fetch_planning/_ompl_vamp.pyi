@@ -287,7 +287,7 @@ class OmplVampPlanner:
         The cost is wrapped as an ``ompl::StateCostIntegralObjective`` —
         trapezoidally integrated along every motion — and drives the
         search of asymptotically-optimal planners (RRT*, BIT*, AIT*,
-        QRRT*, …).  Multiple costs are summed with their ``weight``.
+        …).  Multiple costs are summed with their ``weight``.
 
         For whole-body / base-including subgroups the cost is combined
         with the Dubins / Reeds-Shepp path-length term (which lives in
@@ -327,10 +327,7 @@ class OmplVampPlanner:
             start: Active-DOF start configuration (length :meth:`dimension`).
             goal: Active-DOF goal configuration (length :meth:`dimension`).
             planner_name: OMPL planner identifier (e.g. ``"rrtc"``,
-                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).  Subgroups with
-                the base also accept the multilevel planners ``"qrrt"``,
-                ``"qrrtstar"``, ``"qmp"``, ``"qmpstar"`` and
-                ``"decomposed"``.
+                ``"rrtstar"``, ``"prm"``, ``"bitstar"``).
             time_limit: Solver time limit in seconds.
             simplify: If true, run ``SimpleSetup::simplifySolution`` on the
                 returned path.

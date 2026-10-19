@@ -183,10 +183,7 @@ NB_MODULE(_ompl_vamp, m) {
            "DubinsStateSpace (forward-only curves, no reverse motion "
            "ever).  When true, uses ReedsSheppStateSpace (shortest-of-48 "
            "curves, reverse allowed when geometrically shorter).\n"
-           "Every OMPL geometric planner runs on the active space; "
-           "subgroups with the base also accept the multilevel planners "
-           "(qrrt, qrrtstar, qmp, qmpstar: SE2 -> SE2 x R^N via OMPL "
-           "fiber bundles) and 'decomposed'.",
+           "Every OMPL geometric planner runs on the active space.",
            nb::arg("active_indices"), nb::arg("frozen_config"),
            nb::arg("base_dim") = 0, nb::arg("turning_radius") = 0.2,
            nb::arg("allow_reverse") = false)

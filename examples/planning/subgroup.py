@@ -78,7 +78,6 @@ def main(planner_name: str = "rrtc", time_limit: float = 0.5):
         PRM family ........... prm, prmstar, lazyprm, lazyprmstar,
                                spars, spars2
         Exploration-based .... est, biest, sbl, stride, pdst
-        Multilevel ........... qrrt, qrrtstar, qmp, qmpstar (base subgroups)
 
     The informed planners (``informed_rrtstar`` and the informed trees)
     need a single state space: they reject the base + arm subgroups.

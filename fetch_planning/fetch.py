@@ -18,9 +18,8 @@ The full configuration vector is 11-DOF:
 When the active subgroup contains any base joint the planner plans in
 ``SE2 × R^N``, where the SE(2) space is either ``DubinsStateSpace``
 (forward-only) or ``ReedsSheppStateSpace`` (reverse allowed), selected
-by ``BASE_REVERSE_ENABLE``; these subgroups also accept OMPL's
-multilevel planners (fiber bundles, ``SE2 → SE2 × R^N``).  When only
-arm joints are active a plain ``RealVectorStateSpace`` is used.  See
+by ``BASE_REVERSE_ENABLE``.  When only arm joints are active a plain
+``RealVectorStateSpace`` is used.  See
 :mod:`fetch_planning.planning.motion_planner`.
 """
 

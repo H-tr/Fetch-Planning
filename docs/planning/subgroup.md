@@ -80,11 +80,9 @@ automatically:
   (reverse allowed), selected by `BASE_REVERSE_ENABLE` in
   `fetch_planning/fetch.py`.
 - Every geometric planner (`rrtc`, `rrtstar`, `prm`, …) runs on that
-  space. The OMPL **multilevel planners** (`qrrt`, `qrrtstar`, `qmp`,
-  `qmpstar`; fiber bundles) plan the base first, against the base
-  links, with the hierarchy `SE2 → SE2 × R^N`. The objective keeps
-  the car-like arc length, so any user cost you add is composed with
-  the non-holonomic shaping rather than replacing it.
+  space, like on arm-only subgroups. The objective keeps the
+  car-like arc length, so any user cost you add is composed with the
+  non-holonomic shaping rather than replacing it.
 - Tree extension, rewire, path simplification, and interpolation
   all stay on the curve, and the motion validator checks each edge
   along it. The output path is directly executable by a diff-drive
