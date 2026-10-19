@@ -29,7 +29,7 @@ acceleration limits, for every subgroup.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -40,21 +40,6 @@ from fetch_planning.types import (
     PlanningResult,
     PlanningStatus,
 )
-
-
-@runtime_checkable
-class MotionPlannerBase(Protocol):
-    """Protocol for motion planner backends."""
-
-    @property
-    def robot_name(self) -> str: ...
-
-    @property
-    def num_dof(self) -> int: ...
-
-    def plan(self, start: np.ndarray, goal: np.ndarray) -> PlanningResult: ...
-
-    def validate(self, configuration: np.ndarray) -> bool: ...
 
 
 class MotionPlanner:
@@ -126,8 +111,11 @@ class MotionPlanner:
         )
         self._apply_subgroup_state(full_names, active_indices, base_dim)
 
+        if config.joint_limits:
+            self.set_joint_limits(config.joint_limits)
+
         if pointcloud is not None:
-            self._add_pointcloud_impl(pointcloud, config.point_radius)
+            self.add_pointcloud(pointcloud)
 
         if constraints:
             self._push_constraints(constraints)
@@ -192,6 +180,28 @@ class MotionPlanner:
         return self._ndof
 
     @property
+    def bounds(self) -> tuple[np.ndarray, np.ndarray]:
+        """``(lower, upper)`` joint limits of the active DOF."""
+        return (
+            np.asarray(self._planner.lower_bounds()),
+            np.asarray(self._planner.upper_bounds()),
+        )
+
+    @property
+    def joint_limits(self) -> dict[str, tuple[float, float]]:
+        """``{joint name: (lower, upper)}`` the planner samples in, for every
+        joint of the full body.  :attr:`bounds` gives the active joints'
+        ranges as arrays.
+        """
+        from fetch_planning.fetch import fetch_robot_config
+
+        lower, upper = self._planner.joint_limits()
+        return {
+            name: (float(lo), float(hi))
+            for name, lo, hi in zip(fetch_robot_config.joint_names, lower, upper)
+        }
+
+    @property
     def joint_names(self) -> list[str]:
         """Joint names controlled by this planner, in DOF order."""
         return self._joint_names
@@ -211,36 +221,45 @@ class MotionPlanner:
         """The 11-DOF stance frozen for joints outside this subgroup."""
         return self._base_config.copy()
 
-    @property
-    def has_base(self) -> bool:
-        """True if any of the mobile base joints (x, y, theta) are active.
+    # ── Joint limits ──────────────────────────────────────────────────
 
-        When True, the base moves along Dubins / Reeds-Shepp curves in
-        the state space ``SE2 × R^N``.
-        """
-        return self._has_base
-
-    def set_base_bounds(
-        self,
-        x_lo: float,
-        x_hi: float,
-        y_lo: float,
-        y_hi: float,
-        theta_lo: float = -np.pi,
-        theta_hi: float = np.pi,
+    def set_joint_limits(
+        self, limits: Mapping[str, tuple[float, float]] | None = None
     ) -> None:
-        """Tighten the base (x, y, theta) workspace bounds.
+        """Set the joint ranges the planner samples in, by joint name.
 
-        Only meaningful when ``has_base`` is True. Rebuilds the underlying
-        OMPL state space in place — call before ``plan()``.
+        Joints left out of ``limits`` take the range compiled into the
+        robot model, so ``None`` restores every compiled range.  The
+        ranges cover the full body and are kept across
+        :meth:`set_subgroup`.  Collision checking does not read them.
+        While the base is active, ``base_theta_joint``'s range is not
+        used: the Dubins / Reeds-Shepp heading is periodic.
+
+        Args:
+            limits: ``{joint name: (lower, upper)}`` in metres for
+                ``base_x_joint``, ``base_y_joint`` and the torso and
+                radians otherwise — e.g. bound the base to the map
+                instead of the model's ±10 m, or narrow any joint to keep
+                plans in a smaller range.
+
+        Raises:
+            ValueError: For an unknown joint name, or bounds that are not
+                finite with ``lower < upper``.  The ranges in effect are
+                then left unchanged.
         """
-        if not self._has_base:
-            raise RuntimeError(
-                "set_base_bounds() is only valid for planners whose subgroup "
-                "includes the mobile base joints (fetch, fetch_whole_body, "
-                "fetch_base, fetch_base_arm)."
-            )
-        self._planner.set_base_bounds(x_lo, x_hi, y_lo, y_hi, theta_lo, theta_hi)
+        from fetch_planning._ompl_vamp import OmplVampPlanner
+        from fetch_planning.fetch import fetch_robot_config
+
+        names = fetch_robot_config.joint_names
+        lower, upper = OmplVampPlanner.default_joint_limits()
+        for name, (lo, hi) in (limits or {}).items():
+            if name not in names:
+                raise ValueError(
+                    f"Unknown joint {name!r}; the joints are {', '.join(names)}"
+                )
+            index = names.index(name)
+            lower[index], upper[index] = lo, hi
+        self._planner.set_joint_limits(lower, upper)
 
     # ── Constraint integration ────────────────────────────────────────
 
@@ -322,43 +341,33 @@ class MotionPlanner:
 
     # ── Pointcloud environment ────────────────────────────────────────
 
-    def _add_pointcloud_impl(self, pointcloud: np.ndarray, point_radius: float) -> None:
+    def add_pointcloud(self, pointcloud: np.ndarray) -> None:
+        """Set the scene pointcloud, replacing any previously-registered cloud.
+
+        Args:
+            pointcloud: ``(N, 3)`` array of obstacle positions in world
+                frame.  Uses ``config.point_radius`` as the per-point
+                inflation radius.
+        """
         r_min, r_max = self._planner.min_max_radii()
         self._planner.add_pointcloud(
             np.asarray(pointcloud, dtype=np.float32).tolist(),
             r_min,
             r_max,
-            point_radius,
+            self._config.point_radius,
         )
 
-    def add_pointcloud(self, pointcloud: np.ndarray) -> None:
-        """Add a point cloud to the scene after construction.
-
-        The C++ planner keeps every cloud handed to it — multiple calls
-        accumulate.  Uses ``config.point_radius`` as the per-point
-        inflation radius.
-
-        Args:
-            pointcloud: ``(N, 3)`` array of obstacle positions in world
-                frame.
-        """
-        self._add_pointcloud_impl(pointcloud, self._config.point_radius)
-
     def remove_pointcloud(self) -> bool:
-        """Drop the most-recently-added pointcloud.
+        """Drop the currently-registered pointcloud.
 
-        Returns ``False`` if there was none registered.
+        Returns ``False`` if there was no cloud to remove.
         """
         return self._planner.remove_pointcloud()
 
     @property
     def has_pointcloud(self) -> bool:
-        """``True`` if a pointcloud is currently registered."""
+        """True if a pointcloud is currently registered."""
         return self._planner.has_pointcloud()
-
-    def clear_environment(self) -> None:
-        """Drop every registered obstacle (spheres and point clouds)."""
-        self._planner.clear_environment()
 
     # ── Point cloud filtering ────────────────────────────────────────
 
@@ -544,21 +553,9 @@ class MotionPlanner:
             raise ValueError(f"goal has {len(goal)} DOF, expected {self._ndof}")
 
         if not self._planner.validate(start.tolist()):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                path=None,
-                planning_time_ns=0,
-                iterations=0,
-                path_cost=float("inf"),
-            )
+            return PlanningResult(PlanningStatus.INVALID_START, None, 0, float("inf"))
         if not self._planner.validate(goal.tolist()):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                path=None,
-                planning_time_ns=0,
-                iterations=0,
-                path_cost=float("inf"),
-            )
+            return PlanningResult(PlanningStatus.INVALID_GOAL, None, 0, float("inf"))
 
         if time_limit is None:
             time_limit = self._config.time_limit
@@ -570,27 +567,18 @@ class MotionPlanner:
             time_limit,
             self._config.simplify,
             self._config.interpolate,
-            self._config.interpolate_count,
             self._config.resolution,
         )
 
         if not result.solved:
             return PlanningResult(
-                status=PlanningStatus.FAILED,
-                path=None,
-                planning_time_ns=result.planning_time_ns,
-                iterations=0,
-                path_cost=float("inf"),
+                PlanningStatus.FAILED, None, result.planning_time_ns, float("inf")
             )
-
-        path_np = np.array(result.path, dtype=np.float64)
-
         return PlanningResult(
-            status=PlanningStatus.SUCCESS,
-            path=path_np,
-            planning_time_ns=result.planning_time_ns,
-            iterations=0,
-            path_cost=result.path_cost,
+            PlanningStatus.SUCCESS,
+            np.array(result.path, dtype=np.float64),
+            result.planning_time_ns,
+            result.path_cost,
         )
 
     def plan_kinodynamic(
@@ -813,14 +801,19 @@ class MotionPlanner:
         valid = self._planner.validate_batch(configurations.tolist())
         return np.asarray(valid, dtype=bool)
 
-    def sample_valid(self) -> np.ndarray:
-        """Sample a random collision-free configuration."""
-        lo = np.array(self._planner.lower_bounds())
-        hi = np.array(self._planner.upper_bounds())
-        while True:
-            config = np.random.uniform(lo, hi)
-            if self._planner.validate(config.tolist()):
-                return config
+    def sample_valid(self, max_samples: int = 100_000) -> np.ndarray:
+        """Sample a random collision-free configuration.
+
+        Raises:
+            RuntimeError: If none of ``max_samples`` uniform samples is valid.
+        """
+        lo, hi = self.bounds
+        for _ in range(0, max_samples, 256):
+            batch = np.random.uniform(lo, hi, (256, self._ndof))
+            valid = np.flatnonzero(self.validate_batch(batch))
+            if valid.size:
+                return batch[valid[0]]
+        raise RuntimeError(f"no valid configuration in {max_samples} samples")
 
 
 def available_robots() -> list[str]:

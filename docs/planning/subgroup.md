@@ -88,23 +88,25 @@ automatically:
   along it. The output path is directly executable by a diff-drive
   controller.
 
-Two planner helpers are specific to base-including subgroups:
+The base's workspace comes from the joint limits, like every other
+joint's range:
 
 ```python
-planner.has_base      # True iff any of (base_x, base_y, base_theta) is active
-
-planner.set_base_bounds(
-    x_lo=-4.0, x_hi=4.0,
-    y_lo=-2.0, y_hi=4.0,
-    theta_lo=-np.pi, theta_hi=np.pi,   # defaults shown
-)
+planner.set_joint_limits({
+    "base_x_joint": (-4.0, 4.0),
+    "base_y_joint": (-2.0, 4.0),
+})
+planner.joint_limits["base_x_joint"]   # (-4.0, 4.0)
+planner.bounds                         # (lower, upper) of the active DOF
 ```
 
-`has_base` is a property you can branch on; `set_base_bounds(...)`
-tightens the `(x, y, theta)` workspace box after construction and
-rebuilds the underlying state space in place — call it before
-`plan()`. Calling `set_base_bounds` on an arm-only planner raises a
-`RuntimeError`.
+Joints left out keep the robot model's range (the base spans
+±10 m), `None` restores every compiled range, and an unknown joint
+name or a range that is not finite with `lower < upper` raises
+`ValueError`. The ranges cover the full body and survive
+`set_subgroup`; `PlannerConfig(joint_limits=...)` sets them at
+construction. `base_theta_joint`'s range is not used while the base
+is active: the Dubins / Reeds-Shepp heading is periodic.
 
 Constrained planning (CasADi manifold constraints — see
 [Manifold planning](manifold.md)) is **not supported** for

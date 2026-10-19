@@ -113,7 +113,7 @@ def make_planners(cloud: np.ndarray, time_limit: float, point_radius: float = 0.
         ),
         pointcloud=cloud,
     )
-    wb.set_base_bounds(**demo.BASE_BOUNDS)
+    wb.set_joint_limits(demo.BASE_LIMITS)
     arm = create_planner(
         "fetch_arm_with_torso",
         config=PlannerConfig(

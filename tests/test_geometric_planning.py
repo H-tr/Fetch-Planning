@@ -62,8 +62,9 @@ def test_partial_motions_keep_valid_states(subgroup, planner_name):
             ),
             pointcloud=table_and_shelf(),
         )
-        if planner.has_base:
-            planner.set_base_bounds(-1.0, 2.0, -1.5, 1.5)
+        planner.set_joint_limits(
+            {"base_x_joint": (-1.0, 2.0), "base_y_joint": (-1.5, 1.5)}
+        )
         result = planner.plan(
             planner.extract_config(HOME_JOINTS), planner.sample_valid()
         )
@@ -138,7 +139,7 @@ def test_approximate_solutions_are_not_solved(planner_name):
     planner = OmplVampPlanner([4], frozen.tolist(), 0, BASE_TURNING_RADIUS, False)
     planner.add_sphere([0.8, 0.0, 1.1], 0.1)
     assert planner.validate([-1.2]) and planner.validate([1.2])
-    result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0, 0.0)
+    result = planner.plan([-1.2], [1.2], planner_name, 0.5, False, False, 0.0)
     assert not result.solved
 
 
@@ -157,7 +158,7 @@ def test_base_subgroup_checks_the_whole_body(planner_name):
         config=PlannerConfig(planner_name=planner_name, time_limit=0.5),
         pointcloud=head_height_beam(),
     )
-    planner.set_base_bounds(-1.0, 4.0, -2.0, 2.0)
+    planner.set_joint_limits({"base_x_joint": (-1.0, 4.0), "base_y_joint": (-2.0, 2.0)})
     assert not planner.validate(np.array([1.0, 0.0, 0.0]))
     assert not planner.plan(np.zeros(3), np.array([2.0, 0.0, 0.0])).success
 

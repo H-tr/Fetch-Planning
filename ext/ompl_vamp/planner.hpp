@@ -121,6 +121,9 @@ inline auto make_se2_base_space(double turning_radius, bool allow_reverse)
                                                 /*isSymmetric=*/false);
 }
 
+/// (lower, upper) bounds of every joint, in full-body order.
+using JointLimits = std::pair<std::vector<double>, std::vector<double>>;
+
 struct PlanResult {
   bool solved;
   std::vector<std::vector<double>> path;
@@ -148,34 +151,79 @@ class OmplVampPlanner {
   OmplVampPlanner(std::vector<int> active_indices,
                   std::vector<double> frozen_config, int base_dim = 0,
                   double turning_radius = 0.2, bool allow_reverse = false)
-      : turning_radius_(turning_radius), allow_reverse_(allow_reverse) {
+      : turning_radius_(turning_radius),
+        allow_reverse_(allow_reverse),
+        joint_limits_(default_joint_limits()) {
     set_subgroup(std::move(active_indices), std::move(frozen_config), base_dim);
   }
 
-  /// Configure base workspace bounds (x, y, theta). Call before plan()
-  /// to tighten the default limits.
-  void set_base_bounds(double x_lo, double x_hi, double y_lo, double y_hi,
-                       double theta_lo = -M_PI, double theta_hi = M_PI) {
-    base_x_lo_ = x_lo;
-    base_x_hi_ = x_hi;
-    base_y_lo_ = y_lo;
-    base_y_hi_ = y_hi;
-    base_theta_lo_ = theta_lo;
-    base_theta_hi_ = theta_hi;
+  // ── Joint limits ──────────────────────────────────────────────────
+  //
+  // The planner keeps one (lower, upper) pair per joint of the full
+  // body.  Every active state space takes its bounds from it -- the base
+  // x / y ranges bound the SE(2) space, whose heading is periodic and
+  // takes no range -- so limits set here survive set_subgroup().  They
+  // only shape where OMPL samples and which states it accepts; collision
+  // checking never reads them.
+
+  /// The limits compiled into the robot model, in full-body order.
+  static auto default_joint_limits() -> JointLimits {
+    Robot::Configuration lo, hi;
+    alignas(Robot::Configuration::S::Alignment)
+        std::array<float, Robot::Configuration::num_scalars_rounded>
+            zeros{}, ones{};
+    ones.fill(1.0f);
+    lo = Robot::Configuration(zeros.data());
+    hi = Robot::Configuration(ones.data());
+    Robot::scale_configuration(lo);
+    Robot::scale_configuration(hi);
+    const auto lo_arr = lo.to_array();
+    const auto hi_arr = hi.to_array();
+    JointLimits limits;
+    for (std::size_t i = 0; i < Robot::dimension; ++i) {
+      limits.first.push_back(std::min(lo_arr[i], hi_arr[i]));
+      limits.second.push_back(std::max(lo_arr[i], hi_arr[i]));
+    }
+    return limits;
+  }
+
+  /// The limits in effect, in full-body order.
+  auto joint_limits() const -> JointLimits { return joint_limits_; }
+
+  /// Replace the limits of every joint (full-body order).  Each joint
+  /// needs finite bounds with lower < upper; on error nothing changes.
+  void set_joint_limits(const std::vector<double>& lower,
+                        const std::vector<double>& upper) {
+    if (lower.size() != Robot::dimension || upper.size() != Robot::dimension)
+      throw std::invalid_argument("set_joint_limits: lower and upper need " +
+                                  std::to_string(Robot::dimension) +
+                                  " entries, got " +
+                                  std::to_string(lower.size()) + " and " +
+                                  std::to_string(upper.size()) + ".");
+    for (std::size_t i = 0; i < lower.size(); ++i) {
+      if (!std::isfinite(lower[i]) || !std::isfinite(upper[i]) ||
+          !(lower[i] < upper[i]))
+        throw std::invalid_argument(
+            "set_joint_limits: joint " + std::to_string(i) +
+            " needs finite bounds with lower < upper, got [" +
+            std::to_string(lower[i]) + ", " + std::to_string(upper[i]) + "].");
+    }
+    joint_limits_ = {lower, upper};
     build_state_space();
   }
 
+  /// Set the scene pointcloud, replacing any previously registered one.
   void add_pointcloud(const std::vector<std::array<float, 3>>& points,
                       float r_min, float r_max, float point_radius) {
     std::vector<vamp::collision::Point> pts;
     pts.reserve(points.size());
     for (const auto& p : points) pts.push_back({p[0], p[1], p[2]});
+    float_env_.pointclouds.clear();
     float_env_.pointclouds.emplace_back(pts, r_min, r_max, point_radius);
     sync_env();
   }
 
-  /// Drop the most-recently-added pointcloud.  Returns false if there
-  /// was none registered.
+  /// Drop the registered pointcloud.  Returns false if there was none.
   auto remove_pointcloud() -> bool {
     if (float_env_.pointclouds.empty()) return false;
     float_env_.pointclouds.pop_back();
@@ -261,8 +309,7 @@ class OmplVampPlanner {
 
   auto plan(std::vector<double> start, std::vector<double> goal,
             const std::string& planner_name, double time_limit, bool simplify,
-            bool interpolate, int interpolate_count = 0,
-            double resolution = 64.0) -> PlanResult {
+            bool interpolate, double resolution = 64.0) -> PlanResult {
     if (has_base_ && !constraints_.empty()) {
       throw std::invalid_argument(
           "Constrained planning is not supported for subgroups that "
@@ -270,7 +317,7 @@ class OmplVampPlanner {
           "constrained planning.");
     }
     return plan_geometric(start, goal, planner_name, time_limit, simplify,
-                          interpolate, interpolate_count, resolution);
+                          interpolate, resolution);
   }
 
   // ── Kinodynamic planning (FLASK) ──────────────────────────────────
@@ -513,39 +560,16 @@ class OmplVampPlanner {
 
   auto dimension() const -> int { return active_dim_; }
 
+  /// Bounds of the active joints, from the joint limits in effect.
   auto lower_bounds() const -> std::vector<double> {
-    std::vector<double> lo(active_dim_);
-    if (has_base_) {
-      lo[0] = base_x_lo_;
-      lo[1] = base_y_lo_;
-      lo[2] = base_theta_lo_;
-      if (arm_subspace_) {
-        auto bounds = arm_subspace_->getBounds();
-        for (int i = base_dim_; i < active_dim_; ++i)
-          lo[i] = bounds.low[i - base_dim_];
-      }
-    } else {
-      auto bounds = space_->as<ob::RealVectorStateSpace>()->getBounds();
-      for (int i = 0; i < active_dim_; ++i) lo[i] = bounds.low[i];
-    }
+    std::vector<double> lo;
+    for (const int i : active_indices_) lo.push_back(joint_limits_.first[i]);
     return lo;
   }
 
   auto upper_bounds() const -> std::vector<double> {
-    std::vector<double> hi(active_dim_);
-    if (has_base_) {
-      hi[0] = base_x_hi_;
-      hi[1] = base_y_hi_;
-      hi[2] = base_theta_hi_;
-      if (arm_subspace_) {
-        auto bounds = arm_subspace_->getBounds();
-        for (int i = base_dim_; i < active_dim_; ++i)
-          hi[i] = bounds.high[i - base_dim_];
-      }
-    } else {
-      auto bounds = space_->as<ob::RealVectorStateSpace>()->getBounds();
-      for (int i = 0; i < active_dim_; ++i) hi[i] = bounds.high[i];
-    }
+    std::vector<double> hi;
+    for (const int i : active_indices_) hi.push_back(joint_limits_.second[i]);
     return hi;
   }
 
@@ -561,17 +585,11 @@ class OmplVampPlanner {
   double turning_radius_;
   bool allow_reverse_;
 
-  double base_x_lo_ = -10.0;
-  double base_x_hi_ = 10.0;
-  double base_y_lo_ = -10.0;
-  double base_y_hi_ = 10.0;
-  double base_theta_lo_ = -M_PI;
-  double base_theta_hi_ = M_PI;
+  JointLimits joint_limits_;
 
   std::vector<int> active_indices_;
   std::vector<float> frozen_config_;
   ob::StateSpacePtr space_;
-  std::shared_ptr<ob::RealVectorStateSpace> arm_subspace_;
   FloatEnv float_env_;
   VampEnv env_;
   std::vector<ob::ConstraintPtr> constraints_;
@@ -731,17 +749,7 @@ class OmplVampPlanner {
   }
 
   void build_state_space() {
-    Robot::Configuration lo, hi;
-    alignas(Robot::Configuration::S::Alignment)
-        std::array<float, Robot::Configuration::num_scalars_rounded>
-            zeros{}, ones{};
-    ones.fill(1.0f);
-    lo = Robot::Configuration(zeros.data());
-    hi = Robot::Configuration(ones.data());
-    Robot::scale_configuration(lo);
-    Robot::scale_configuration(hi);
-    auto lo_arr = lo.to_array();
-    auto hi_arr = hi.to_array();
+    const auto& [lo, hi] = joint_limits_;
 
     if (has_base_) {
       // SE(2) base space — Dubins (forward-only) or Reeds-Shepp
@@ -750,10 +758,10 @@ class OmplVampPlanner {
       // distinction is whether reverse segments are admissible.
       auto se2 = make_se2_base_space(turning_radius_, allow_reverse_);
       ob::RealVectorBounds se2_bounds(2);
-      se2_bounds.setLow(0, base_x_lo_);
-      se2_bounds.setHigh(0, base_x_hi_);
-      se2_bounds.setLow(1, base_y_lo_);
-      se2_bounds.setHigh(1, base_y_hi_);
+      for (int i = 0; i < 2; ++i) {
+        se2_bounds.setLow(i, lo[active_indices_[i]]);
+        se2_bounds.setHigh(i, hi[active_indices_[i]]);
+      }
       se2->setBounds(se2_bounds);
       // Car-like curves are longer than straight lines, so the default
       // 1%-of-maxextent segment fraction produces extremely fine
@@ -768,7 +776,6 @@ class OmplVampPlanner {
 
       if (arm_active_dim == 0) {
         base_only_ = true;
-        arm_subspace_ = nullptr;
         space_ = se2;
       } else {
         base_only_ = false;
@@ -776,11 +783,10 @@ class OmplVampPlanner {
         ob::RealVectorBounds rv_bounds(arm_active_dim);
         for (int i = 0; i < arm_active_dim; ++i) {
           auto idx = active_indices_[i + base_dim_];
-          rv_bounds.setLow(i, std::min(lo_arr[idx], hi_arr[idx]));
-          rv_bounds.setHigh(i, std::max(lo_arr[idx], hi_arr[idx]));
+          rv_bounds.setLow(i, lo[idx]);
+          rv_bounds.setHigh(i, hi[idx]);
         }
         rv->setBounds(rv_bounds);
-        arm_subspace_ = rv;
 
         auto compound = std::make_shared<ob::CompoundStateSpace>();
         compound->addSubspace(se2, 1.0);
@@ -800,12 +806,11 @@ class OmplVampPlanner {
       ob::RealVectorBounds bounds(active_dim_);
       for (int i = 0; i < active_dim_; ++i) {
         auto idx = active_indices_[i];
-        bounds.setLow(i, std::min(lo_arr[idx], hi_arr[idx]));
-        bounds.setHigh(i, std::max(lo_arr[idx], hi_arr[idx]));
+        bounds.setLow(i, lo[idx]);
+        bounds.setHigh(i, hi[idx]);
       }
       rv->setBounds(bounds);
       space_ = rv;
-      arm_subspace_ = rv;
     }
   }
 
@@ -870,8 +875,7 @@ class OmplVampPlanner {
   auto plan_geometric(const std::vector<double>& start,
                       const std::vector<double>& goal,
                       const std::string& planner_name, double time_limit,
-                      bool simplify, bool interpolate,
-                      int interpolate_count = 0, double resolution = 64.0)
+                      bool simplify, bool interpolate, double resolution = 64.0)
       -> PlanResult {
     const bool constrained = !constraints_.empty();
     if (constrained) {
@@ -914,9 +918,7 @@ class OmplVampPlanner {
 
       auto& path = ss.getSolutionPath();
       if (interpolate) {
-        if (interpolate_count > 0) {
-          path.interpolate(static_cast<unsigned int>(interpolate_count));
-        } else if (resolution > 0.0) {
+        if (resolution > 0.0) {
           densify_by_resolution(path, si->getStateSpace(), resolution);
         } else {
           path.interpolate();

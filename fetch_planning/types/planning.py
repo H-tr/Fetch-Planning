@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -69,33 +70,17 @@ class PlannerConfig:
     point_radius: float = 0.01
     simplify: bool = True
     interpolate: bool = True
-    # Interpolation density knobs (at most one may be nonzero):
-    #   interpolate_count > 0 : total waypoint count (distance-weighted
-    #       distribution across edges).
-    #   resolution > 0.0      : waypoints per unit state-space distance
-    #       — each edge of length d gets ceil(d * resolution) segments.
-    #   both 0                : OMPL default longest-valid-segment
-    #       fraction.
-    interpolate_count: int = 0
+    # Interpolation density: each edge of length d gets
+    # ceil(d * resolution) segments; 0 uses OMPL's default
+    # longest-valid-segment fraction.
     resolution: float = 64.0
-
-    # Backward-compat mapping from old VAMP planner names
-    _COMPAT_MAP: dict = None  # type: ignore[assignment]
+    # Joint-range overrides by joint name, as (lower, upper) in metres
+    # for the base x / y and the torso and radians otherwise.  Joints left
+    # out keep the range compiled into the robot model (the base spans
+    # ±10 m); the planner samples only inside these ranges.
+    joint_limits: dict[str, tuple[float, float]] | None = None
 
     def __post_init__(self):
-        compat = {"fcit": "rrtstar", "aorrtc": "bitstar"}
-        if self.planner_name in compat:
-            import warnings
-
-            new = compat[self.planner_name]
-            warnings.warn(
-                f"Planner '{self.planner_name}' is deprecated, "
-                f"using '{new}' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.planner_name = new
-
         if self.planner_name not in GEOMETRIC_PLANNERS:
             raise ValueError(
                 f"Unknown planner '{self.planner_name}'. Supported: "
@@ -105,15 +90,26 @@ class PlannerConfig:
             raise ValueError("time_limit must be > 0")
         if self.point_radius <= 0:
             raise ValueError("point_radius must be > 0")
-        if self.interpolate_count < 0:
-            raise ValueError("interpolate_count must be >= 0")
         if self.resolution < 0:
             raise ValueError("resolution must be >= 0")
-        if self.interpolate_count > 0 and self.resolution > 0:
-            raise ValueError(
-                "Specify at most one of interpolate_count (>0) or "
-                "resolution (>0), not both."
-            )
+        if self.joint_limits is not None:
+            limits = {}
+            for name, bounds in self.joint_limits.items():
+                try:
+                    lower, upper = (float(b) for b in bounds)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"joint_limits[{name!r}] must be a (lower, upper) pair"
+                    ) from None
+                if not (math.isfinite(lower) and math.isfinite(upper)):
+                    raise ValueError(f"joint_limits[{name!r}] must be finite")
+                if lower >= upper:
+                    raise ValueError(
+                        f"joint_limits[{name!r}] needs lower < upper, "
+                        f"got ({lower}, {upper})"
+                    )
+                limits[name] = (lower, upper)
+            self.joint_limits = limits
 
 
 @dataclass
@@ -123,7 +119,6 @@ class PlanningResult:
     status: PlanningStatus
     path: np.ndarray | None
     planning_time_ns: int
-    iterations: int
     path_cost: float
 
     @property

@@ -195,7 +195,7 @@ ARM_TIME = 1.0
 TUCK_TORSO = 0.10
 TUCK_ARM = HOME_JOINTS[3:].copy()
 TUCK_ARM[0] = TUCK_TORSO
-BASE_BOUNDS = dict(x_lo=-4.0, x_hi=4.0, y_lo=-2.0, y_hi=4.0)
+BASE_LIMITS = {"base_x_joint": (-4.0, 4.0), "base_y_joint": (-2.0, 4.0)}
 
 
 # ── Scene helpers ─────────────────────────────────────────────────────
@@ -457,7 +457,7 @@ def main(
         config=PlannerConfig(planner_name=nav_planner, time_limit=nav_time),
         pointcloud=cloud,
     )
-    planner.set_base_bounds(**BASE_BOUNDS)
+    planner.set_joint_limits(BASE_LIMITS)
     t_build = _time.perf_counter() - t_build
     print(f"  planner built in {t_build*1000:.0f} ms (reused for all calls)")
 

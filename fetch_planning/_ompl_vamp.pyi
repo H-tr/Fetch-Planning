@@ -192,19 +192,22 @@ class OmplVampPlanner:
         """
         ...
 
-    def set_base_bounds(
-        self,
-        x_lo: float,
-        x_hi: float,
-        y_lo: float,
-        y_hi: float,
-        theta_lo: float = ...,
-        theta_hi: float = ...,
-    ) -> None:
-        """Tighten the SE(2) base workspace bounds.
+    @staticmethod
+    def default_joint_limits() -> tuple[list[float], list[float]]:
+        """``(lower, upper)`` compiled into the robot model, full-body order."""
+        ...
 
-        Rebuilds the underlying OMPL state space in place — call before
-        ``plan()``.  Only meaningful when ``base_dim > 0``.
+    def joint_limits(self) -> tuple[list[float], list[float]]:
+        """``(lower, upper)`` in effect, full-body order."""
+        ...
+
+    def set_joint_limits(self, lower: Sequence[float], upper: Sequence[float]) -> None:
+        """Replace the range of every joint (full-body order).
+
+        Each joint needs finite bounds with ``lower < upper``; otherwise
+        ``ValueError`` and nothing changes.  The ranges bound the active
+        state space (the base x / y range the SE(2) space, whose heading
+        is periodic) and survive :meth:`set_subgroup`.
         """
         ...
 
@@ -215,10 +218,7 @@ class OmplVampPlanner:
         r_max: float,
         point_radius: float,
     ) -> None:
-        """Add a point cloud obstacle to the collision environment.
-
-        Multiple calls accumulate; the planner keeps every cloud handed
-        to it.
+        """Set the scene point cloud, replacing any registered one.
 
         Args:
             points: ``(N, 3)`` array of obstacle positions in world frame.
@@ -231,14 +231,14 @@ class OmplVampPlanner:
         ...
 
     def remove_pointcloud(self) -> bool:
-        """Drop the most-recently-added pointcloud.
+        """Drop the registered pointcloud.
 
         Returns ``False`` if there was none to remove.
         """
         ...
 
     def has_pointcloud(self) -> bool:
-        """``True`` if at least one pointcloud is currently registered."""
+        """``True`` if a pointcloud is currently registered."""
         ...
 
     def add_sphere(self, center: Sequence[float], radius: float) -> None:
@@ -318,7 +318,6 @@ class OmplVampPlanner:
         time_limit: float = 10.0,
         simplify: bool = True,
         interpolate: bool = True,
-        interpolate_count: int = 0,
         resolution: float = 64.0,
     ) -> PlanResult:
         """Plan a collision-free path from ``start`` to ``goal``.
@@ -331,20 +330,14 @@ class OmplVampPlanner:
             time_limit: Solver time limit in seconds.
             simplify: If true, run ``SimpleSetup::simplifySolution`` on the
                 returned path.
-            interpolate: If true, densify the simplified path.  Density
-                is picked by ``interpolate_count`` when it is ``> 0``,
-                otherwise by ``resolution`` when it is ``> 0``, otherwise
-                by OMPL's default longest-valid-segment fraction.
-            interpolate_count: Target total waypoint count for the whole
-                path.  OMPL distributes states across edges proportionally
-                to their length.  ``0`` disables this knob.  Cannot be
-                combined with ``resolution``.
+            interpolate: If true, densify the simplified path: by
+                ``resolution`` when it is ``> 0``, otherwise by OMPL's
+                default longest-valid-segment fraction.
             resolution: Waypoints per unit of state-space distance.  Each
                 edge of length ``d`` is split into ``ceil(d * resolution)``
                 equal segments, so higher values give denser paths.
                 Default ``64.0``.  Set to ``0.0`` to fall back to OMPL's
-                default interpolator.  Cannot be combined with
-                ``interpolate_count``.
+                default interpolator.
         """
         ...
 
@@ -446,7 +439,7 @@ class OmplVampPlanner:
         ...
 
     def lower_bounds(self) -> list[float]:
-        """Per-joint lower bounds for the active DOFs."""
+        """Per-joint lower bounds for the active DOFs (the joint limits)."""
         ...
 
     def upper_bounds(self) -> list[float]:

@@ -220,7 +220,7 @@ def test_invalid_start_is_reported():
 @pytest.fixture
 def wb_planner():
     planner = create_planner("fetch_whole_body", config=PlannerConfig(time_limit=1.0))
-    planner.set_base_bounds(-3.0, 3.0, -3.0, 3.0)
+    planner.set_joint_limits({"base_x_joint": (-3.0, 3.0), "base_y_joint": (-3.0, 3.0)})
     # A pillar the base has to steer around.
     planner._planner.add_sphere([1.0, 0.0, 0.3], 0.35)
     return planner
